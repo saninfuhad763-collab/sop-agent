@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>OpsMind AI</title>
+  <style>
+    body {
+      font-family: Arial;
+      background: #f4f4f4;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 700px;
+      margin: auto;
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+    }
+
+    input, button {
+      padding: 10px;
+      margin-top: 10px;
+      width: 100%;
+    }
+
+    #chat {
+      margin-top: 20px;
+    }
+
+    .message {
+      margin-bottom: 15px;
+      padding: 10px;
+      border-radius: 8px;
+    }
+
+    .user {
+      background: #d1e7ff;
+    }
+
+    .bot {
+      background: #e2ffe2;
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="container">
+  <h2>📄 OpsMind AI</h2>
+
+  <!-- Upload -->
+  <input type="file" id="fileInput">
+  <button onclick="uploadFile()">Upload PDF</button>
+
+  <!-- Ask -->
+  <input type="text" id="question" placeholder="Ask a question...">
+  <button onclick="askQuestion()">Ask</button>
+
+  <!-- Chat -->
+  <div id="chat"></div>
+</div>
+
+<script>
+async function uploadFile() {
+  const file = document.getElementById("fileInput").files[0];
+
+  if (!file) {
+    alert("Please select a file");
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const res = await fetch("http://localhost:5000/upload", {
+    method: "POST",
+    body: formData
+  });
+
+  const data = await res.json();
+  alert("PDF uploaded! Chunks: " + data.totalChunks);
+}
+
+async function askQuestion() {
+  const question = document.getElementById("question").value;
+
+  if (!question) return;
+
+  addMessage("user", question);
+
+  try {
+    const res = await fetch("http://localhost:5000/ask", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ question })
+    });
+
+    const data = await res.json();
+
+    console.log("API RESPONSE:", data); // ✅ DEBUG
+
+    addMessage(
+      "bot",
+      (data.answer || "No answer received") +
+      "<br><small>Sources: " + (data.sources?.join(", ") || "None") + "</small>"
+    );
+
+  } catch (error) {
+    console.error("FETCH ERROR:", error); // ✅ DEBUG
+    addMessage("bot", "❌ Error connecting to server");
+  }
+}
+
+function addMessage(type, text) {
+  const chat = document.getElementById("chat");
+
+  const div = document.createElement("div");
+  div.className = "message " + type;
+  div.innerHTML = text;
+
+  chat.appendChild(div);
+}
+</script>
+
+</body>
+</html>

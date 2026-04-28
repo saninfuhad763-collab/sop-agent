@@ -1,3 +1,5 @@
+const cors = require("cors");
+
 let documents = [];
 
 const express = require("express");
@@ -17,6 +19,7 @@ const app = express();
 console.log("GROQ API KEY:", process.env.GROQ_API_KEY);
 console.log("Starting server...");
 
+app.use(cors());
 app.use(express.json());
 
 const upload = multer({ dest: "uploads/" });
@@ -62,7 +65,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 });
 
 
-// ✅ ASK ROUTE (UPDATED SYSTEM PROMPT)
+// ✅ ASK ROUTE (🔥 IMPROVED SEARCH)
 app.post("/ask", async (req, res) => {
   const { question } = req.body;
 
@@ -79,29 +82,36 @@ app.post("/ask", async (req, res) => {
       });
     }
 
-    const questionWords = question
-      .toLowerCase()
-      .replace(/[^\w\s]/g, "")
-      .split(" ")
-      .filter(word => word.length > 2);
+    // 🔥 NEW IMPROVED MATCHING
+    const cleanQuestion = question.toLowerCase();
 
     const scoredChunks = documents.map(doc => {
       const content = doc.content.toLowerCase();
 
       let score = 0;
 
-      questionWords.forEach(word => {
+      // ✅ Full sentence match (very strong)
+      if (content.includes(cleanQuestion)) {
+        score += 5;
+      }
+
+      // ✅ Word matching
+      cleanQuestion.split(" ").forEach(word => {
         if (content.includes(word)) {
-          score++;
+          score += 1;
         }
       });
 
       return { ...doc, score };
     });
 
+    // 🔥 Sort by score
     scoredChunks.sort((a, b) => b.score - a.score);
 
-    const selectedChunks = scoredChunks.slice(0, 5);
+    // 🔥 IMPORTANT FILTER (removes useless chunks)
+    const selectedChunks = scoredChunks
+      .filter(doc => doc.score > 0)
+      .slice(0, 5);
 
     const context = selectedChunks
       .map(doc => doc.content)
