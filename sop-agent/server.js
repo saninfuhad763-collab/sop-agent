@@ -5,15 +5,15 @@ const fs = require("fs");
 require("dotenv").config();
 
 
-const { GoogleGenAI } = require("@google/genai");
+const Groq = require("groq-sdk");
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY,
 });
 
 const app = express();
 
-console.log("GEMINI API KEY:", process.env.GEMINI_API_KEY);
+console.log("GROQ API KEY:", process.env.GROQ_API_KEY);
 console.log("Starting server...");
 
 app.use(express.json());
@@ -40,12 +40,21 @@ app.post("/ask", async (req, res) => {
   const { question, context } = req.body;
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
-      contents: `Answer ONLY using the below document:\n\n${context}\n\nQuestion: ${question}`,
+    const completion = await groq.chat.completions.create({
+      model: "llama-3.1-8b-instant", 
+      messages: [
+        {
+          role: "system",
+          content: "Answer ONLY using the provided document.",
+        },
+        {
+          role: "user",
+          content: `Document:\n${context}\n\nQuestion: ${question}`,
+        },
+      ],
     });
 
-    const answer = response.text;
+    const answer = completion.choices[0].message.content;
 
     res.json({ answer });
   } catch (error) {
