@@ -1,7 +1,5 @@
+// 🔧 IMPORTS
 const cors = require("cors");
-
-let documents = [];
-
 const express = require("express");
 const multer = require("multer");
 const pdfParse = require("pdf-parse");
@@ -15,125 +13,150 @@ const groq = new Groq({
 });
 
 const app = express();
-
-console.log("GROQ API KEY:", process.env.GROQ_API_KEY);
-console.log("Starting server...");
+let documents = [];
 
 app.use(cors());
 app.use(express.json());
 
 const upload = multer({ dest: "uploads/" });
 
+// ✅ ROOT ROUTE
 app.get("/", (req, res) => {
-  res.send("Server is running");
+  res.send("🚀 Server is running");
 });
 
 
-// ✅ UPLOAD ROUTE
+// 🔥 SIMPLE LOCAL EMBEDDING (NO DOWNLOAD)
+function simpleEmbedding(text) {
+  const words = text.toLowerCase().split(/\W+/);
+  const vector = new Array(100).fill(0);
+
+  words.forEach(word => {
+    let hash = 0;
+    for (let i = 0; i < word.length; i++) {
+      hash += word.charCodeAt(i);
+    }
+    vector[hash % 100] += 1;
+  });
+
+  return vector;
+}
+
+
+// 🔥 COSINE SIMILARITY
+function cosineSimilarity(a, b) {
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+
+// ✅ UPLOAD
 app.post("/upload", upload.single("file"), async (req, res) => {
   try {
-    const filePath = req.file.path;
+    let text = (await pdfParse(fs.readFileSync(req.file.path))).text;
 
-    const dataBuffer = fs.readFileSync(filePath);
-    const pdfData = await pdfParse(dataBuffer);
+    // 🔥 CLEAN TEXT
+    text = text
+      .replace(/[^\x00-\x7F]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
 
-    const text = pdfData.text;
+    // 🔥 NEW SENTENCE-BASED CHUNKING
+    const sentences = text.split(". ");
 
-    const chunkSize = 1000;
-    const overlap = 100;
+    let chunks = [];
+    let chunk = "";
 
-    documents = [];
-
-    for (let i = 0; i < text.length; i += chunkSize - overlap) {
-      const chunk = text.substring(i, i + chunkSize);
-
-      documents.push({
-        content: chunk,
-        source: `Chunk ${documents.length + 1}`,
-      });
+    for (let s of sentences) {
+      if ((chunk + s).length > 1000) {
+        chunks.push(chunk);
+        chunk = "";
+      }
+      chunk += s + ". ";
     }
 
+    if (chunk) chunks.push(chunk);
+
+    console.log("📦 Total chunks:", chunks.length);
+
+    // 🔥 LIMIT for performance
+    chunks = chunks.slice(0, 40);
+
+    console.log("📦 Using chunks:", chunks.length);
+    console.log("⏳ Creating embeddings...");
+
+    // 🔥 LOCAL EMBEDDINGS
+    const embeddings = chunks.map(chunk => simpleEmbedding(chunk));
+
+    documents = chunks.map((c, i) => ({
+      content: c,
+      embedding: embeddings[i],
+      source: `Chunk ${i + 1}`,
+    }));
+
+    console.log("✅ Embeddings ready");
+
     res.json({
-      message: "PDF uploaded and processed",
+      message: "PDF processed successfully",
       totalChunks: documents.length,
     });
 
-  } catch (error) {
-    console.error("UPLOAD ERROR:", error.message);
-    res.status(500).json({ error: error.message });
+  } catch (err) {
+    console.error("UPLOAD ERROR:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 
 
-// ✅ ASK ROUTE (🔥 IMPROVED SEARCH)
+// ✅ ASK
 app.post("/ask", async (req, res) => {
-  const { question } = req.body;
-
   try {
+    const { question } = req.body;
+
     if (!question) {
-      return res.status(400).json({
-        error: "Question is required",
-      });
+      return res.status(400).json({ error: "No question provided" });
     }
 
-    if (documents.length === 0) {
-      return res.status(400).json({
-        error: "No document uploaded yet",
-      });
+    if (!documents.length) {
+      return res.status(400).json({ error: "No document uploaded yet" });
     }
 
-    // 🔥 NEW IMPROVED MATCHING
-    const cleanQuestion = question.toLowerCase();
+    console.log("📥 Question:", question);
 
-    const scoredChunks = documents.map(doc => {
-      const content = doc.content.toLowerCase();
+    const qEmbed = simpleEmbedding(question);
 
-      let score = 0;
+    console.log("🔍 Finding best chunks...");
 
-      // ✅ Full sentence match (very strong)
-      if (content.includes(cleanQuestion)) {
-        score += 5;
-      }
+    const scored = documents.map(d => ({
+      ...d,
+      score: cosineSimilarity(qEmbed, d.embedding),
+    }));
 
-      // ✅ Word matching
-      cleanQuestion.split(" ").forEach(word => {
-        if (content.includes(word)) {
-          score += 1;
-        }
-      });
-
-      return { ...doc, score };
-    });
-
-    // 🔥 Sort by score
-    scoredChunks.sort((a, b) => b.score - a.score);
-
-    // 🔥 IMPORTANT FILTER (removes useless chunks)
-    const selectedChunks = scoredChunks
-      .filter(doc => doc.score > 0)
+    const top = scored
+      .sort((a, b) => b.score - a.score)
       .slice(0, 5);
 
-    const context = selectedChunks
-      .map(doc => doc.content)
-      .join("\n");
+    const context = top.map(c => c.content).join("\n\n");
+
+    console.log("🧠 Context preview:\n", context.substring(0, 300));
+    console.log("➡️ Calling Groq...");
 
     const completion = await groq.chat.completions.create({
       model: "llama-3.1-8b-instant",
       messages: [
         {
           role: "system",
-          content: `
-You are an assistant that answers ONLY from the given context.
-
-If answer is not present, say:
-"I don't know based on the document."
-
-Also mention source.
-`,
+          content:
+            "Answer using the context. If partial info exists, explain clearly instead of saying I don't know.",
         },
         {
           role: "user",
-          content: `Document:\n${context}\n\nQuestion: ${question}`,
+          content: `Context:\n${context}\n\nQuestion: ${question}`,
         },
       ],
     });
@@ -142,16 +165,15 @@ Also mention source.
 
     res.json({
       answer,
-      sources: selectedChunks.map(doc => doc.source),
+      sources: top.map(t => t.source),
     });
 
-  } catch (error) {
-    console.error("ASK ERROR:", error.message);
-    res.status(500).json({ error: error.message });
+  } catch (err) {
+    console.error("ASK ERROR:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 
 
-app.listen(5000, () => {
-  console.log("Server started on port 5000");
-});
+// 🚀 START SERVER
+app.listen(5000, () => console.log("🚀 Running on 5000"));

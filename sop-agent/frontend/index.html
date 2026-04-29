@@ -2,6 +2,7 @@
 <html>
 <head>
   <title>OpsMind AI</title>
+
   <style>
     body {
       font-family: Arial;
@@ -25,6 +26,8 @@
 
     #chat {
       margin-top: 20px;
+      max-height: 400px;
+      overflow-y: auto;
     }
 
     .message {
@@ -33,13 +36,9 @@
       border-radius: 8px;
     }
 
-    .user {
-      background: #d1e7ff;
-    }
-
-    .bot {
-      background: #e2ffe2;
-    }
+    .user { background: #d1e7ff; }
+    .bot { background: #e2ffe2; }
+    .error { background: #ffe2e2; color: red; }
   </style>
 </head>
 
@@ -48,26 +47,26 @@
 <div class="container">
   <h2>📄 OpsMind AI</h2>
 
-  <!-- Upload -->
   <input type="file" id="fileInput">
   <button onclick="uploadFile()">Upload PDF</button>
 
-  <!-- Ask -->
   <input type="text" id="question" placeholder="Ask a question...">
   <button onclick="askQuestion()">Ask</button>
 
-  <!-- Chat -->
   <div id="chat"></div>
 </div>
 
 <script>
+
 async function uploadFile() {
   const file = document.getElementById("fileInput").files[0];
 
   if (!file) {
-    alert("Please select a file");
+    alert("Select a file first");
     return;
   }
+
+  addMessage("bot", "⏳ Processing PDF...");
 
   const formData = new FormData();
   formData.append("file", file);
@@ -78,15 +77,25 @@ async function uploadFile() {
   });
 
   const data = await res.json();
-  alert("PDF uploaded! Chunks: " + data.totalChunks);
+
+  if (data.error) {
+    addMessage("error", data.error);
+    return;
+  }
+
+  addMessage("bot", "✅ PDF ready. Ask questions now.");
 }
 
 async function askQuestion() {
-  const question = document.getElementById("question").value;
+  const input = document.getElementById("question");
+  const question = input.value;
 
   if (!question) return;
 
   addMessage("user", question);
+  input.value = "";
+
+  const loadingId = addMessage("bot", "⏳ Thinking...");
 
   try {
     const res = await fetch("http://localhost:5000/ask", {
@@ -99,17 +108,22 @@ async function askQuestion() {
 
     const data = await res.json();
 
-    console.log("API RESPONSE:", data); // ✅ DEBUG
+    removeMessage(loadingId);
+
+    if (data.error) {
+      addMessage("error", data.error);
+      return;
+    }
 
     addMessage(
       "bot",
-      (data.answer || "No answer received") +
-      "<br><small>Sources: " + (data.sources?.join(", ") || "None") + "</small>"
+      data.answer +
+      "<br><small>Sources: " + data.sources.join(", ") + "</small>"
     );
 
-  } catch (error) {
-    console.error("FETCH ERROR:", error); // ✅ DEBUG
-    addMessage("bot", "❌ Error connecting to server");
+  } catch (err) {
+    removeMessage(loadingId);
+    addMessage("error", "Server error");
   }
 }
 
@@ -120,8 +134,20 @@ function addMessage(type, text) {
   div.className = "message " + type;
   div.innerHTML = text;
 
+  const id = Date.now();
+  div.id = id;
+
   chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+
+  return id;
 }
+
+function removeMessage(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+}
+
 </script>
 
 </body>
