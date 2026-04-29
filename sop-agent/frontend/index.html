@@ -5,40 +5,113 @@
 
   <style>
     body {
-      font-family: Arial;
-      background: #f4f4f4;
-      padding: 20px;
+      background: linear-gradient(135deg, #1f1c2c, #928dab);
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
     }
 
-    .container {
-      max-width: 700px;
-      margin: auto;
-      background: white;
-      padding: 20px;
-      border-radius: 10px;
-    }
-
-    input, button {
-      padding: 10px;
-      margin-top: 10px;
+      .container {
       width: 100%;
+      max-width: 750px;
+      background: rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(12px);
+      border-radius: 15px;
+      padding: 20px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+      color: white;
+    }
+
+
+    h2 {
+      text-align: center;
+      margin-bottom: 20px;
+      font-weight: 600;
+    }
+
+    input[type="file"] {
+      background: rgba(255,255,255,0.2);
+      border: none;
+      padding: 10px;
+      border-radius: 8px;
+      color: white;
+    }
+
+    input[type="text"] {
+      padding: 12px;
+      border-radius: 8px;
+      border: none;
+      outline: none;
+      margin-top: 10px;
+    }
+
+    button {
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      margin-top: 10px;
+      cursor: pointer;
+      font-weight: bold;
+      transition: 0.3s;
+    }
+
+    button:hover {
+      transform: translateY(-2px);
+      opacity: 0.9;
+    }
+
+    button:nth-of-type(1) {
+      background: #00c6ff;
+      color: black;
+    }
+
+    button:nth-of-type(2) {
+      background: #7bed9f;
+      color: black;
     }
 
     #chat {
       margin-top: 20px;
-      max-height: 400px;
+      max-height: 350px;
       overflow-y: auto;
+      padding-right: 5px;
     }
 
     .message {
-      margin-bottom: 15px;
-      padding: 10px;
-      border-radius: 8px;
+      margin-bottom: 12px;
+      padding: 12px;
+      border-radius: 12px;
+      max-width: 80%;
+      word-wrap: break-word;
+      font-size: 14px;
+      line-height: 1.4;
     }
 
-    .user { background: #d1e7ff; }
-    .bot { background: #e2ffe2; }
-    .error { background: #ffe2e2; color: red; }
+    .user {
+      background: #4facfe;
+      color: white;
+      margin-left: auto;
+      text-align: right;
+    }
+
+    .bot {
+      background: #43e97b;
+      color: black;
+      margin-right: auto;
+    }
+
+    .error {
+      background: #ff6b6b;
+      color: white;
+      text-align: center;
+    }
+
+    small {
+      opacity: 0.7;
+      display: block;
+      margin-top: 5px;
+    }
   </style>
 </head>
 
