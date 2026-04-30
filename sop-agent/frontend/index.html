@@ -1,116 +1,156 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>OpsMind AI</title>
 
   <style>
+    :root {
+      --bg: #05070f;
+      --muted: #98a2c7;
+      --primary: #1b4dff;
+      --text: #eef2ff;
+      --border: rgba(120, 145, 255, 0.2);
+      --success: #14d59a;
+      --danger: #ff5978;
+    }
+
+    * { box-sizing: border-box; }
+
     body {
-      background: linear-gradient(135deg, #1f1c2c, #928dab);
-      height: 100vh;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-    }
-
-    .container {
-      width: 100%;
-      max-width: 750px;
-      background: rgba(255, 255, 255, 0.1);
-      backdrop-filter: blur(12px);
-      border-radius: 15px;
+      margin: 0;
+      font-family: Inter, sans-serif;
+      background: radial-gradient(circle at 22% 18%, rgba(27,77,255,0.32), transparent 35%), var(--bg);
+      color: var(--text);
+      display: grid;
+      place-items: center;
       padding: 20px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-      color: white;
     }
 
-    h2 {
-      text-align: center;
-      margin-bottom: 20px;
+    .shell {
+      width: min(900px, 100%);
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      padding: 20px;
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 20px;
+      background: #0b1020;
     }
+
+    .panel {
+      border-radius: 15px;
+      padding: 15px;
+      background: rgba(255,255,255,0.05);
+    }
+
+    .title { font-size: 20px; }
+    .subtitle { color: var(--muted); font-size: 13px; }
 
     input, button {
       padding: 10px;
-      border-radius: 8px;
+      border-radius: 10px;
       border: none;
-      margin: 5px;
+      margin-top: 8px;
+      width: 100%;
     }
 
     button {
+      background: var(--primary);
+      color: white;
       cursor: pointer;
-      font-weight: bold;
     }
 
     #chat {
-      margin-top: 20px;
-      max-height: 350px;
+      height: 400px;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
+      gap: 10px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
     }
 
     .message {
-      max-width: 70%;
+      max-width: 75%;
       padding: 10px;
-      margin: 8px;
       border-radius: 10px;
-      word-wrap: break-word;
-      font-size: 14px;
     }
 
     .user {
-      background: #4da3ff;
-      color: white;
       align-self: flex-end;
-      text-align: right;
+      background: var(--primary);
+      color: white;
     }
 
     .bot {
-      background: #4cd964;
-      color: black;
       align-self: flex-start;
-      text-align: left;
+      background: rgba(255,255,255,0.1);
+    }
+
+    .composer {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    #status {
+      font-size: 12px;
+      color: var(--muted);
     }
   </style>
 </head>
 
 <body>
 
-<div class="container">
-  <h2>📄 OpsMind AI</h2>
+<div class="shell">
 
-  <input type="file" id="fileInput">
-  <button onclick="uploadFile()">Upload PDF</button>
-  <button onclick="resetSession()">Reset</button>
+  <aside class="panel">
+    <h2 class="title">OpsMind AI</h2>
+    <p class="subtitle">Upload PDF and ask questions</p>
 
-  <br>
+    <input type="file" id="fileInput" accept="application/pdf" />
+    <button onclick="uploadFile()">Upload PDF</button>
+    <button onclick="resetSession()">Reset</button>
 
-  <input type="text" id="question" placeholder="Ask a question...">
-  <button onclick="askQuestion()">Ask</button>
+    <p id="status">Upload a PDF to begin.</p>
+  </aside>
 
-  <div id="chat"></div>
+  <section class="panel">
+    <div id="chat"></div>
+
+    <div class="composer">
+      <input type="text" id="question" placeholder="Ask something..." />
+      <button onclick="askQuestion()">Ask</button>
+    </div>
+  </section>
+
 </div>
 
 <script>
 const API_BASE = "http://localhost:5000";
-
 let loadingDiv = null;
 
-// ✅ MESSAGE FUNCTION
+function setStatus(text, tone="") {
+  const status = document.getElementById("status");
+  status.textContent = text;
+  status.style.color = tone === "ok" ? "green" : tone === "err" ? "red" : "";
+}
+
 function addMessage(text, sender) {
   const chat = document.getElementById("chat");
 
   const div = document.createElement("div");
-  div.className = "message " + (sender === "user" ? "user" : "bot");
-
+  div.className = "message " + sender;
   div.innerHTML = text.replace(/\n/g, "<br>");
 
   chat.appendChild(div);
   chat.scrollTop = chat.scrollHeight;
-
   return div;
 }
 
-// ⏳ LOADING
 function showLoading() {
   loadingDiv = addMessage("⏳ Thinking...", "bot");
 }
@@ -119,39 +159,39 @@ function removeLoading() {
   if (loadingDiv) loadingDiv.remove();
 }
 
-// 📄 UPLOAD
+// 📄 Upload
 async function uploadFile() {
   const file = document.getElementById("fileInput").files[0];
 
-  if (!file || !file.name.toLowerCase().endsWith(".pdf")) {
-    alert("Please select a PDF file.");
-    return;
-  }
+  if (!file) return;
 
-  const msg = addMessage("⏳ Processing PDF...", "bot");
-
+  setStatus("Uploading...");
   const formData = new FormData();
   formData.append("file", file);
 
   try {
     const res = await fetch(`${API_BASE}/upload`, {
       method: "POST",
-      body: formData,
+      body: formData
     });
 
     const data = await res.json();
 
-    msg.innerText = res.ok ? "✅ PDF ready. Ask questions now." : "❌ Upload failed";
-  } catch {
-    msg.innerText = "❌ Upload failed";
+    if (!res.ok) throw new Error(data.error);
+
+    setStatus("PDF uploaded successfully", "ok");
+    addMessage("✅ PDF ready. Ask questions.", "bot");
+
+  } catch (err) {
+    setStatus(err.message, "err");
+    addMessage("❌ Upload failed", "bot");
   }
 }
 
-// ❓ ASK (UPDATED STREAMING FIX)
+// ❓ Ask
 async function askQuestion() {
   const input = document.getElementById("question");
   const question = input.value.trim();
-
   if (!question) return;
 
   addMessage(question, "user");
@@ -162,47 +202,47 @@ async function askQuestion() {
   try {
     const response = await fetch(`${API_BASE}/ask`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ question })
     });
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
 
     let fullText = "";
-    const botDiv = addMessage("", "bot");
-
     let firstChunk = true;
+    const botDiv = addMessage("", "bot");
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
       if (firstChunk) {
-        removeLoading(); // ✅ FIXED HERE
+        removeLoading();
         firstChunk = false;
       }
 
-      const chunk = decoder.decode(value);
-      fullText += chunk;
-
+      fullText += decoder.decode(value);
       botDiv.innerHTML = fullText.replace(/\n/g, "<br>");
     }
 
   } catch {
     removeLoading();
-    addMessage("❌ Server error", "bot");
+    addMessage("❌ Error getting answer", "bot");
   }
 }
 
-// 🔁 RESET
+// 🔁 Reset
 async function resetSession() {
-  addMessage("⏳ Resetting...", "bot");
-
   await fetch(`${API_BASE}/reset`, { method: "POST" });
-
-  addMessage("✅ Session reset", "bot");
+  addMessage("🔁 Session reset", "bot");
+  setStatus("Session reset");
 }
+
+// Enter key support
+document.getElementById("question").addEventListener("keydown", e => {
+  if (e.key === "Enter") askQuestion();
+});
 </script>
 
 </body>
