@@ -109,10 +109,18 @@
 
   <aside class="panel">
     <h2 class="title">OpsMind AI</h2>
-    <p class="subtitle">Upload PDF and ask questions</p>
+    
 
-    <input type="file" id="fileInput" accept="application/pdf" />
-    <button onclick="uploadFile()">Upload PDF</button>
+    <input type="file" id="fileInput" accept="application/pdf" hidden />
+
+    <button onclick="openFilePicker()">
+      Upload PDF
+    </button>
+
+
+    <p id="fileName" style="font-size:12px;color:gray;"></p>
+
+
     <button onclick="resetSession()">Reset</button>
 
     <p id="status">Upload a PDF to begin.</p>
@@ -132,6 +140,10 @@
 <script>
 const API_BASE = "http://localhost:5000";
 let loadingDiv = null;
+
+let selectedFile = null;
+
+let lastFileName = "";
 
 function setStatus(text, tone="") {
   const status = document.getElementById("status");
@@ -161,9 +173,10 @@ function removeLoading() {
 
 // 📄 Upload
 async function uploadFile() {
-  const file = document.getElementById("fileInput").files[0];
+  const file = selectedFile;
 
   if (!file) return;
+
 
   setStatus("Uploading...");
   const formData = new FormData();
@@ -180,6 +193,14 @@ async function uploadFile() {
     if (!res.ok) throw new Error(data.error);
 
     setStatus("PDF uploaded successfully", "ok");
+   
+
+    if (lastFileName) {
+      document.getElementById("fileName").textContent =
+    lastFileName + " ✅ Uploaded";
+   }
+
+
     addMessage("✅ PDF ready. Ask questions.", "bot");
 
   } catch (err) {
@@ -205,6 +226,20 @@ async function askQuestion() {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ question })
     });
+         
+
+    if (!response.ok) {
+  const errData = await response.json();
+
+  removeLoading();
+
+  const message = errData.error || "Something went wrong";
+
+  addMessage( message, "bot");
+
+  return;
+}     
+
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -239,10 +274,48 @@ async function resetSession() {
   setStatus("Session reset");
 }
 
+
+function openFilePicker() {
+  const input = document.getElementById("fileInput");
+
+  // Force reset so same file triggers change
+  input.value = "";
+
+  input.click();
+}
+
+
 // Enter key support
 document.getElementById("question").addEventListener("keydown", e => {
   if (e.key === "Enter") askQuestion();
 });
+
+
+
+
+
+
+document.getElementById("fileInput").addEventListener("change", () => {
+  const input = document.getElementById("fileInput");
+  const file = input.files[0];
+
+  if (!file) return;
+
+  selectedFile = file;
+
+  // ✅ Save globally
+  lastFileName = file.name;
+
+  // ✅ Always show from memory
+  document.getElementById("fileName").textContent = lastFileName;
+
+  input.value = "";
+
+  uploadFile();
+});
+
+
+
 </script>
 
 </body>

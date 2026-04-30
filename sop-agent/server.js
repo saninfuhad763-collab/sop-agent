@@ -214,8 +214,10 @@ app.post("/ask", async (req, res) => {
     }
 
     if (!documents.length) {
-      return res.status(400).json({ error: "No document uploaded yet" });
-    }
+  return res.status(400).json({
+    error: "⚠️ Please upload a PDF document first."
+  });
+}
 
     const cleanQuestion = sanitizeAndNormalize(question).toLowerCase();
 
