@@ -12,7 +12,7 @@
       align-items: center;
     }
 
-      .container {
+    .container {
       width: 100%;
       max-width: 750px;
       background: rgba(255, 255, 255, 0.1);
@@ -23,94 +23,52 @@
       color: white;
     }
 
-
     h2 {
       text-align: center;
       margin-bottom: 20px;
-      font-weight: 600;
     }
 
-    input[type="file"] {
-      background: rgba(255,255,255,0.2);
-      border: none;
+    input, button {
       padding: 10px;
       border-radius: 8px;
-      color: white;
-    }
-
-    input[type="text"] {
-      padding: 12px;
-      border-radius: 8px;
       border: none;
-      outline: none;
-      margin-top: 10px;
+      margin: 5px;
     }
 
     button {
-      padding: 12px;
-      border: none;
-      border-radius: 8px;
-      margin-top: 10px;
       cursor: pointer;
       font-weight: bold;
-      transition: 0.3s;
-    }
-
-    button:hover {
-      transform: translateY(-2px);
-      opacity: 0.9;
-    }
-
-    button:nth-of-type(1) {
-      background: #00c6ff;
-      color: black;
-    }
-
-    button:nth-of-type(2) {
-      background: #7bed9f;
-      color: black;
     }
 
     #chat {
       margin-top: 20px;
       max-height: 350px;
       overflow-y: auto;
-      padding-right: 5px;
+      display: flex;
+      flex-direction: column;
     }
 
     .message {
-      margin-bottom: 12px;
-      padding: 12px;
-      border-radius: 12px;
-      max-width: 80%;
+      max-width: 70%;
+      padding: 10px;
+      margin: 8px;
+      border-radius: 10px;
       word-wrap: break-word;
       font-size: 14px;
-      line-height: 1.4;
     }
 
     .user {
-      background: #4facfe;
+      background: #4da3ff;
       color: white;
-      margin-left: auto;
+      align-self: flex-end;
       text-align: right;
     }
 
     .bot {
-      background: #43e97b;
+      background: #4cd964;
       color: black;
-      margin-right: auto;
-    }
-
-    .error {
-      background: #ff6b6b;
-      color: white;
-      text-align: center;
-    }
-
-    small {
-      opacity: 0.7;
-      display: block;
-      margin-top: 5px;
+      align-self: flex-start;
+      text-align: left;
     }
   </style>
 </head>
@@ -121,11 +79,13 @@
   <h2>📄 OpsMind AI</h2>
 
   <input type="file" id="fileInput">
-  <button id="uploadButton" type="button" onclick="uploadFile()">Upload PDF</button>
-  <button id="resetButton" type="button" onclick="resetSession()">Reset</button>
+  <button onclick="uploadFile()">Upload PDF</button>
+  <button onclick="resetSession()">Reset</button>
+
+  <br>
 
   <input type="text" id="question" placeholder="Ask a question...">
-  <button id="askButton" type="button" onclick="askQuestion()">Ask</button>
+  <button onclick="askQuestion()">Ask</button>
 
   <div id="chat"></div>
 </div>
@@ -133,16 +93,33 @@
 <script>
 const API_BASE = "http://localhost:5000";
 
-const uploadButton = document.getElementById("uploadButton");
-const askButton = document.getElementById("askButton");
-const resetButton = document.getElementById("resetButton");
+let loadingDiv = null;
 
-function setControls(enabled) {
-  uploadButton.disabled = !enabled;
-  askButton.disabled = !enabled;
-  resetButton.disabled = !enabled;
+// ✅ MESSAGE FUNCTION
+function addMessage(text, sender) {
+  const chat = document.getElementById("chat");
+
+  const div = document.createElement("div");
+  div.className = "message " + (sender === "user" ? "user" : "bot");
+
+  div.innerHTML = text.replace(/\n/g, "<br>");
+
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+
+  return div;
 }
 
+// ⏳ LOADING
+function showLoading() {
+  loadingDiv = addMessage("⏳ Thinking...", "bot");
+}
+
+function removeLoading() {
+  if (loadingDiv) loadingDiv.remove();
+}
+
+// 📄 UPLOAD
 async function uploadFile() {
   const file = document.getElementById("fileInput").files[0];
 
@@ -151,9 +128,7 @@ async function uploadFile() {
     return;
   }
 
-  setControls(false);
-  const botId = addMessage("bot", "⏳ Processing PDF...");
-  const botDiv = document.getElementById(botId);
+  const msg = addMessage("⏳ Processing PDF...", "bot");
 
   const formData = new FormData();
   formData.append("file", file);
@@ -166,111 +141,68 @@ async function uploadFile() {
 
     const data = await res.json();
 
-    if (!res.ok || data.error) {
-      botDiv.innerText = "❌ " + (data.error || "Upload failed.");
-      return;
-    }
-
-    botDiv.innerText = "✅ PDF ready. Ask questions now.";
-  } catch (err) {
-    botDiv.innerText = "❌ Upload failed";
-  } finally {
-    setControls(true);
+    msg.innerText = res.ok ? "✅ PDF ready. Ask questions now." : "❌ Upload failed";
+  } catch {
+    msg.innerText = "❌ Upload failed";
   }
 }
 
+// ❓ ASK (UPDATED STREAMING FIX)
 async function askQuestion() {
   const input = document.getElementById("question");
   const question = input.value.trim();
 
   if (!question) return;
 
-  addMessage("user", question);
+  addMessage(question, "user");
   input.value = "";
 
-  setControls(false);
-  const botId = addMessage("bot", "⏳ Thinking...");
-  const botDiv = document.getElementById(botId);
+  showLoading();
 
   try {
     const response = await fetch(`${API_BASE}/ask`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ question }),
     });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ error: response.statusText }));
-      botDiv.innerText = "❌ " + (errorData.error || "Request failed.");
-      return;
-    }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
 
     let fullText = "";
-    botDiv.innerText = "";
+    const botDiv = addMessage("", "bot");
+
+    let firstChunk = true;
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
+      if (firstChunk) {
+        removeLoading(); // ✅ FIXED HERE
+        firstChunk = false;
+      }
+
       const chunk = decoder.decode(value);
       fullText += chunk;
-      botDiv.innerText = fullText;
 
-      const chat = document.getElementById("chat");
-      chat.scrollTop = chat.scrollHeight;
+      botDiv.innerHTML = fullText.replace(/\n/g, "<br>");
     }
-  } catch (err) {
-    botDiv.innerText = "❌ Server error";
-  } finally {
-    setControls(true);
+
+  } catch {
+    removeLoading();
+    addMessage("❌ Server error", "bot");
   }
 }
 
+// 🔁 RESET
 async function resetSession() {
-  setControls(false);
-  const botId = addMessage("bot", "⏳ Resetting session...");
-  const botDiv = document.getElementById(botId);
+  addMessage("⏳ Resetting...", "bot");
 
-  try {
-    const res = await fetch(`${API_BASE}/reset`, {
-      method: "POST",
-    });
+  await fetch(`${API_BASE}/reset`, { method: "POST" });
 
-    const data = await res.json();
-    if (!res.ok || data.error) {
-      botDiv.innerText = "❌ " + (data.error || "Reset failed.");
-      return;
-    }
-
-    botDiv.innerText = "✅ Session reset. Upload a new PDF.";
-  } catch (err) {
-    botDiv.innerText = "❌ Reset failed";
-  } finally {
-    setControls(true);
-  }
+  addMessage("✅ Session reset", "bot");
 }
-
-function addMessage(type, text) {
-  const chat = document.getElementById("chat");
-
-  const div = document.createElement("div");
-  div.className = "message " + type;
-  div.innerText = text;
-
-  const id = Date.now();
-  div.id = id;
-
-  chat.appendChild(div);
-  chat.scrollTop = chat.scrollHeight;
-
-  return id;
-}
-
 </script>
 
 </body>
