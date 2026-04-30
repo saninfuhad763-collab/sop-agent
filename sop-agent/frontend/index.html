@@ -121,82 +121,137 @@
   <h2>📄 OpsMind AI</h2>
 
   <input type="file" id="fileInput">
-  <button onclick="uploadFile()">Upload PDF</button>
+  <button id="uploadButton" type="button" onclick="uploadFile()">Upload PDF</button>
+  <button id="resetButton" type="button" onclick="resetSession()">Reset</button>
 
   <input type="text" id="question" placeholder="Ask a question...">
-  <button onclick="askQuestion()">Ask</button>
+  <button id="askButton" type="button" onclick="askQuestion()">Ask</button>
 
   <div id="chat"></div>
 </div>
 
 <script>
+const API_BASE = "http://localhost:5000";
+
+const uploadButton = document.getElementById("uploadButton");
+const askButton = document.getElementById("askButton");
+const resetButton = document.getElementById("resetButton");
+
+function setControls(enabled) {
+  uploadButton.disabled = !enabled;
+  askButton.disabled = !enabled;
+  resetButton.disabled = !enabled;
+}
 
 async function uploadFile() {
   const file = document.getElementById("fileInput").files[0];
 
-  if (!file) {
-    alert("Select a file first");
+  if (!file || !file.name.toLowerCase().endsWith(".pdf")) {
+    alert("Please select a PDF file.");
     return;
   }
 
-  addMessage("bot", "⏳ Processing PDF...");
+  setControls(false);
+  const botId = addMessage("bot", "⏳ Processing PDF...");
+  const botDiv = document.getElementById(botId);
 
   const formData = new FormData();
   formData.append("file", file);
 
-  const res = await fetch("http://localhost:5000/upload", {
-    method: "POST",
-    body: formData
-  });
+  try {
+    const res = await fetch(`${API_BASE}/upload`, {
+      method: "POST",
+      body: formData,
+    });
 
-  const data = await res.json();
+    const data = await res.json();
 
-  if (data.error) {
-    addMessage("error", data.error);
-    return;
+    if (!res.ok || data.error) {
+      botDiv.innerText = "❌ " + (data.error || "Upload failed.");
+      return;
+    }
+
+    botDiv.innerText = "✅ PDF ready. Ask questions now.";
+  } catch (err) {
+    botDiv.innerText = "❌ Upload failed";
+  } finally {
+    setControls(true);
   }
-
-  addMessage("bot", "✅ PDF ready. Ask questions now.");
 }
 
 async function askQuestion() {
   const input = document.getElementById("question");
-  const question = input.value;
+  const question = input.value.trim();
 
   if (!question) return;
 
   addMessage("user", question);
   input.value = "";
 
-  const loadingId = addMessage("bot", "⏳ Thinking...");
+  setControls(false);
+  const botId = addMessage("bot", "⏳ Thinking...");
+  const botDiv = document.getElementById(botId);
 
   try {
-    const res = await fetch("http://localhost:5000/ask", {
+    const response = await fetch(`${API_BASE}/ask`, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
       },
-      body: JSON.stringify({ question })
+      body: JSON.stringify({ question }),
     });
 
-    const data = await res.json();
-
-    removeMessage(loadingId);
-
-    if (data.error) {
-      addMessage("error", data.error);
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: response.statusText }));
+      botDiv.innerText = "❌ " + (errorData.error || "Request failed.");
       return;
     }
 
-    addMessage(
-      "bot",
-      data.answer +
-      "<br><small>Sources: " + data.sources.join(", ") + "</small>"
-    );
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
 
+    let fullText = "";
+    botDiv.innerText = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value);
+      fullText += chunk;
+      botDiv.innerText = fullText;
+
+      const chat = document.getElementById("chat");
+      chat.scrollTop = chat.scrollHeight;
+    }
   } catch (err) {
-    removeMessage(loadingId);
-    addMessage("error", "Server error");
+    botDiv.innerText = "❌ Server error";
+  } finally {
+    setControls(true);
+  }
+}
+
+async function resetSession() {
+  setControls(false);
+  const botId = addMessage("bot", "⏳ Resetting session...");
+  const botDiv = document.getElementById(botId);
+
+  try {
+    const res = await fetch(`${API_BASE}/reset`, {
+      method: "POST",
+    });
+
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      botDiv.innerText = "❌ " + (data.error || "Reset failed.");
+      return;
+    }
+
+    botDiv.innerText = "✅ Session reset. Upload a new PDF.";
+  } catch (err) {
+    botDiv.innerText = "❌ Reset failed";
+  } finally {
+    setControls(true);
   }
 }
 
@@ -205,7 +260,7 @@ function addMessage(type, text) {
 
   const div = document.createElement("div");
   div.className = "message " + type;
-  div.innerHTML = text;
+  div.innerText = text;
 
   const id = Date.now();
   div.id = id;
@@ -214,11 +269,6 @@ function addMessage(type, text) {
   chat.scrollTop = chat.scrollHeight;
 
   return id;
-}
-
-function removeMessage(id) {
-  const el = document.getElementById(id);
-  if (el) el.remove();
 }
 
 </script>
