@@ -172,6 +172,12 @@ function rankWithHybridScore(query, docs) {
     .slice(0, TOP_K_CHUNKS);
 }
 
+function formatContext(topChunks) {
+  return topChunks
+    .map((c, index) => `[${index + 1}] ${c.content}`)
+    .join("\n\n");
+}
+
 function buildSources(topChunks) {
   return topChunks.map((chunk, index) => {
     const preview = chunk.content.slice(0, 120).trim();
@@ -228,16 +234,35 @@ app.post("/ask", async (req, res) => {
     }
 
     const topChunks = rankWithHybridScore(cleanQuestion, documents);
+    const relevantChunks = topChunks.filter((chunk) => chunk.score >= MIN_RELEVANCE_SCORE);
 
-    const context = topChunks
-      .map((c, index) => `[${index + 1}] ${c.content}`)
-      .join("\n\n");
+    if (!relevantChunks.length) {
+      return res.status(200).send(
+        "I could not find relevant information in the uploaded PDF for that question. Please rephrase your question or upload a clearer PDF."
+      );
+    }
+
+    const context = formatContext(relevantChunks);
+    const ragPrompt = [
+      "You are a strict PDF question-answering assistant.",
+      "Use only the provided PDF context to answer.",
+      "If the answer is not in the context, say you cannot find it in the PDF.",
+      "Keep answers concise and factual.",
+      "",
+      "PDF Context:",
+      context,
+      "",
+      `Question: ${question}`,
+    ].join("\n");
 
     const completion = await groq.chat.completions.create({
       model: "llama-3.1-8b-instant",
       messages: [
-        { role: "system", content: context },
-        ...chatHistory.slice(-6),
+        {
+          role: "system",
+          content: "Answer questions using only provided PDF context.",
+        },
+        { role: "user", content: ragPrompt },
       ],
       stream: true,
     });
