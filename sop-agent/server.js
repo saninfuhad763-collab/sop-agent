@@ -21,6 +21,16 @@ let chatHistory = [];
 const MAX_DOCUMENT_CHUNKS = 40;
 const MAX_CHUNK_LENGTH = 1000;
 const MAX_CHAT_HISTORY = 12;
+const VECTOR_DIMENSIONS = 200;
+const TOP_K_CHUNKS = 3;
+const MONGO_URI = process.env.MONGO_URI;
+const MONGO_DB_NAME = process.env.MONGO_DB_NAME || "sop_agent";
+const MONGO_COLLECTION = process.env.MONGO_COLLECTION || "document_chunks";
+const MONGO_VECTOR_INDEX = process.env.MONGO_VECTOR_INDEX || "chunk_vector_index";
+
+let mongoClient;
+let chunksCollection;
+let MongoClientCtor = null;
 
 // ✅ FIXED CORS (ALLOW ALL FOR DEV)
 app.use(cors());
@@ -41,17 +51,72 @@ app.get("/", (req, res) => {
   res.send("🚀 Server is running");
 });
 
-// 🔥 SIMPLE EMBEDDING (IMPROVED)
+function sanitizeAndNormalize(text) {
+  return (text || "")
+    .replace(/[^\n\x00-\x7F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenize(text) {
+  return sanitizeAndNormalize(text)
+    .toLowerCase()
+    .split(/\W+/)
+    .filter(Boolean);
+}
+
+function splitIntoChunks(text, maxLength = MAX_CHUNK_LENGTH) {
+  const normalized = sanitizeAndNormalize(text);
+  if (!normalized) return [];
+
+  const sentenceLikeParts =
+    normalized.match(/[^.!?\n]+[.!?]?/g)?.map((s) => s.trim()).filter(Boolean) || [];
+
+  const chunks = [];
+  let currentChunk = "";
+
+  for (const part of sentenceLikeParts) {
+    const candidate = currentChunk ? `${currentChunk} ${part}` : part;
+
+    if (candidate.length <= maxLength) {
+      currentChunk = candidate;
+      continue;
+    }
+
+    if (currentChunk) {
+      chunks.push(currentChunk.trim());
+      currentChunk = "";
+    }
+
+    if (part.length <= maxLength) {
+      currentChunk = part;
+      continue;
+    }
+
+    let start = 0;
+    while (start < part.length) {
+      const end = Math.min(start + maxLength, part.length);
+      chunks.push(part.slice(start, end).trim());
+      start = end;
+    }
+  }
+
+  if (currentChunk) chunks.push(currentChunk.trim());
+
+  return chunks.filter(Boolean).slice(0, MAX_DOCUMENT_CHUNKS);
+}
+
+// 🔥 SIMPLE EMBEDDING
 function simpleEmbedding(text) {
-  const words = text.toLowerCase().split(/\W+/);
-  const vector = new Array(200).fill(0); // increased size
+  const words = tokenize(text);
+  const vector = new Array(VECTOR_DIMENSIONS).fill(0);
 
   words.forEach((word) => {
     let hash = 0;
     for (let i = 0; i < word.length; i++) {
       hash += word.charCodeAt(i);
     }
-    vector[hash % 200] += 1;
+    vector[hash % VECTOR_DIMENSIONS] += 1;
   });
 
   return vector;
@@ -59,15 +124,107 @@ function simpleEmbedding(text) {
 
 // 🔥 COSINE
 function cosineSimilarity(a, b) {
-  let dot = 0,
-    normA = 0,
-    normB = 0;
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+
   for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i];
     normA += a[i] * a[i];
     normB += b[i] * b[i];
   }
+
   return dot / (Math.sqrt(normA) * Math.sqrt(normB) || 1);
+}
+
+function keywordScore(query, content) {
+  const queryTokens = tokenize(query);
+  const contentLower = content.toLowerCase();
+
+  return queryTokens.reduce((score, token) => {
+    if (token.length < 2) return score;
+    return contentLower.includes(token) ? score + 1 : score;
+  }, 0);
+}
+
+function rankWithHybridScore(query, docs) {
+  const queryEmbedding = simpleEmbedding(query);
+
+  return docs
+    .map((doc) => {
+      const semanticScore = cosineSimilarity(queryEmbedding, doc.embedding);
+      const lexicalScore = keywordScore(query, doc.content);
+      return {
+        ...doc,
+        score: semanticScore + lexicalScore * 0.2,
+      };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, TOP_K_CHUNKS);
+}
+
+async function connectMongo() {
+  if (!MONGO_URI || chunksCollection) return;
+
+  try {
+    if (!MongoClientCtor) {
+      ({ MongoClient: MongoClientCtor } = require("mongodb"));
+    }
+
+    mongoClient = new MongoClientCtor(MONGO_URI);
+    await mongoClient.connect();
+    const db = mongoClient.db(MONGO_DB_NAME);
+    chunksCollection = db.collection(MONGO_COLLECTION);
+    console.log("✅ MongoDB connected");
+  } catch (error) {
+    console.warn("⚠️ MongoDB unavailable, using in-memory retrieval only.", error.message);
+    chunksCollection = null;
+  }
+}
+
+async function saveChunksToMongo(chunks) {
+  if (!chunksCollection) return;
+
+  await chunksCollection.deleteMany({});
+  if (!chunks.length) return;
+
+  await chunksCollection.insertMany(chunks);
+}
+
+async function vectorSearchInMongo(question) {
+  if (!chunksCollection) return null;
+
+  const queryVector = simpleEmbedding(question);
+  const pipeline = [
+    {
+      $vectorSearch: {
+        index: MONGO_VECTOR_INDEX,
+        path: "embedding",
+        queryVector,
+        numCandidates: 50,
+        limit: TOP_K_CHUNKS,
+      },
+    },
+    {
+      $project: {
+        _id: 0,
+        content: 1,
+        source: 1,
+        embedding: 1,
+        vectorScore: { $meta: "vectorSearchScore" },
+      },
+    },
+  ];
+
+  try {
+    const vectorMatches = await chunksCollection.aggregate(pipeline).toArray();
+    if (!vectorMatches.length) return [];
+
+    return rankWithHybridScore(question, vectorMatches);
+  } catch (error) {
+    console.warn("⚠️ Vector search failed, falling back to local ranking.", error.message);
+    return null;
+  }
 }
 
 // ✅ UPLOAD
@@ -81,38 +238,15 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     const parsed = await pdfParse(raw);
     const filePath = req.file.path;
 
-    let text = (parsed.text || "")
-      .replace(/[^\n\x00-\x7F]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+    const chunks = splitIntoChunks(parsed.text || "");
 
-    const sentences = text.match(/[^.!?]+[.!?]+(\s|$)/g) || [text];
-
-    const chunks = [];
-    let chunk = "";
-
-    for (let sentence of sentences) {
-      sentence = sentence.trim();
-      if (!sentence) continue;
-
-      if ((chunk + " " + sentence).length > MAX_CHUNK_LENGTH) {
-        if (chunk) chunks.push(chunk.trim());
-        chunk = sentence;
-      } else {
-        chunk += " " + sentence;
-      }
-    }
-
-    if (chunk) chunks.push(chunk.trim());
-
-    const limitedChunks = chunks.slice(0, MAX_DOCUMENT_CHUNKS);
-
-    documents = limitedChunks.map((content, index) => ({
+    documents = chunks.map((content, index) => ({
       content,
       embedding: simpleEmbedding(content),
       source: `Chunk ${index + 1}`,
     }));
 
+    await saveChunksToMongo(documents);
     chatHistory = [];
 
     fs.unlink(filePath, () => {});
@@ -120,6 +254,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     res.json({
       message: "PDF processed successfully",
       totalChunks: documents.length,
+      vectorStore: chunksCollection ? "mongodb" : "memory",
     });
   } catch (err) {
     console.error("Upload failed:", err);
@@ -140,7 +275,7 @@ app.post("/ask", async (req, res) => {
       return res.status(400).json({ error: "No document uploaded yet" });
     }
 
-    const cleanQuestion = question.toLowerCase();
+    const cleanQuestion = sanitizeAndNormalize(question).toLowerCase();
 
     chatHistory.push({ role: "user", content: question });
 
@@ -148,28 +283,11 @@ app.post("/ask", async (req, res) => {
       chatHistory = chatHistory.slice(-MAX_CHAT_HISTORY * 2);
     }
 
-    // 🔥 HYBRID SEARCH (BETTER)
-    const queryEmbedding = simpleEmbedding(cleanQuestion);
-
-    const scored = documents.map((doc) => {
-      const semanticScore = cosineSimilarity(
-        queryEmbedding,
-        doc.embedding
-      );
-
-      const keywordScore = cleanQuestion
-        .split(" ")
-        .filter((word) => doc.content.toLowerCase().includes(word)).length;
-
-      return {
-        ...doc,
-        score: semanticScore + keywordScore * 0.2,
-      };
-    });
-
-    const topChunks = scored
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 3);
+    const vectorTopChunks = await vectorSearchInMongo(cleanQuestion);
+    const topChunks =
+      vectorTopChunks && vectorTopChunks.length
+        ? vectorTopChunks
+        : rankWithHybridScore(cleanQuestion, documents);
 
     const context = topChunks.map((c) => c.content).join("\n\n");
 
@@ -219,10 +337,7 @@ STRICT RULES:
       content: fullAnswer,
     });
 
-    res.write(
-      "\n\n📄 Sources:\n" +
-        topChunks.map((c) => c.source).join("\n")
-    );
+    res.write("\n\n📄 Sources:\n" + topChunks.map((c) => c.source).join("\n"));
 
     res.end();
   } catch (err) {
@@ -232,11 +347,16 @@ STRICT RULES:
 });
 
 // 🔁 RESET
-app.post("/reset", (req, res) => {
+app.post("/reset", async (req, res) => {
   documents = [];
   chatHistory = [];
+  if (chunksCollection) {
+    await chunksCollection.deleteMany({});
+  }
   res.json({ message: "Session reset" });
 });
 
 // 🚀 START
-app.listen(5000, () => console.log("🚀 Running on 5000"));
+connectMongo().finally(() => {
+  app.listen(5000, () => console.log("🚀 Running on 5000"));
+});
