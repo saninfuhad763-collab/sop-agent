@@ -21,8 +21,10 @@ let chatHistory = [];
 const MAX_DOCUMENT_CHUNKS = 40;
 const MAX_CHUNK_LENGTH = 1000;
 const MAX_CHAT_HISTORY = 12;
+const MIN_RELEVANCE_SCORE = 0.2;
 const VECTOR_DIMENSIONS = 200;
-const TOP_K_CHUNKS = 5;
+
+const TOP_K_CHUNKS = 6;
 const MONGO_URI = process.env.MONGO_URI;
 const MONGO_DB_NAME = process.env.MONGO_DB_NAME || "sop_agent";
 const MONGO_COLLECTION = process.env.MONGO_COLLECTION || "document_chunks";
@@ -32,7 +34,7 @@ let mongoClient;
 let chunksCollection;
 let MongoClientCtor = null;
 
-// ✅ FIXED CORS (ALLOW ALL FOR DEV)
+// ✅ FIXED CORS
 app.use(cors());
 app.use(express.json());
 
@@ -50,91 +52,99 @@ const upload = multer({
 app.get("/", (req, res) => {
   res.send("🚀 Server is running");
 });
-function sanitizeAndNormalize(text) {
-  return (text || "")
-    .replace(/[^\n\x00-\x7F]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
-function tokenize(text) {
-  return sanitizeAndNormalize(text)
-    .toLowerCase()
-    .split(/\W+/)
-    .filter(Boolean);
-}
-
-function splitIntoChunks(text, maxLength = MAX_CHUNK_LENGTH) {
-  const normalized = sanitizeAndNormalize(text);
-  if (!normalized) return [];
-
-  const sentenceLikeParts =
-    normalized.match(/[^.!?\n]+[.!?]?/g)?.map((s) => s.trim()).filter(Boolean) || [];
-
-  const outChunks = [];
-  let currentChunk = "";
-
-  for (const part of sentenceLikeParts) {
-    const candidate = currentChunk ? `${currentChunk} ${part}` : part;
-
-    if (candidate.length <= maxLength) {
-      currentChunk = candidate;
-      continue;
-    }
-
-    if (currentChunk) {
-      outChunks.push(currentChunk.trim());
-      currentChunk = "";
-    }
-
-    if (part.length <= maxLength) {
-      currentChunk = part;
-      continue;
-    }
-
-    let start = 0;
-    while (start < part.length) {
-      const end = Math.min(start + maxLength, part.length);
-      outChunks.push(part.slice(start, end).trim());
-      start = end;
-    }
-  }
-
-  if (currentChunk) outChunks.push(currentChunk.trim());
-
-  return outChunks.filter(Boolean).slice(0, MAX_DOCUMENT_CHUNKS);
-}
-
-// 🔥 SIMPLE EMBEDDING
+// ✅ ADDED FUNCTION (ONLY CHANGE)
 function simpleEmbedding(text) {
-const words = tokenize(text);
-  const vector = new Array(VECTOR_DIMENSIONS).fill(0);
+  const vector = new Array(200).fill(0);
+  const words = text.toLowerCase().split(/\W+/);
 
-  words.forEach((word) => {
+  words.forEach(word => {
     let hash = 0;
     for (let i = 0; i < word.length; i++) {
       hash += word.charCodeAt(i);
     }
- vector[hash % VECTOR_DIMENSIONS] += 1;
+    vector[hash % 200]++;
   });
 
   return vector;
 }
 
-// 🔥 COSINE
-function cosineSimilarity(a, b) {
-let dot = 0;
+// 🔥 ADD THIS (UPLOAD ROUTE)
+app.post("/upload", upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+
+    const filePath = req.file.path;
+    const dataBuffer = fs.readFileSync(filePath);
+    const pdfData = await pdfParse(dataBuffer);
+
+    const text = pdfData.text;
+
+    if (!text || !text.trim()) {
+      return res.status(400).json({ error: "PDF has no readable content" });
+    }
+
+    const chunks = text.match(/.{1,1000}/g) || [];
+
+    documents = chunks.map((chunk, i) => ({
+      content: chunk,
+      embedding: simpleEmbedding(chunk),
+      source: `Chunk ${i + 1}`,
+    }));
+
+    await saveChunksToMongo(documents);
+
+    fs.unlinkSync(filePath);
+
+    res.json({
+      message: "PDF uploaded successfully",
+      chunks: documents.length,
+    });
+  } catch (err) {
+    console.error("Upload error:", err);
+    res.status(500).json({ error: "Upload failed" });
+  }
+});
+
+
+function sanitizeAndNormalize(text) {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+
+function cosineSimilarity(vecA, vecB) {
+  if (!vecA || !vecB || vecA.length !== vecB.length) return 0;
+
+  let dotProduct = 0;
   let normA = 0;
   let normB = 0;
 
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
+  for (let i = 0; i < vecA.length; i++) {
+    dotProduct += vecA[i] * vecB[i];
+    normA += vecA[i] * vecA[i];
+    normB += vecB[i] * vecB[i];
   }
 
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB) || 1);
+  if (normA === 0 || normB === 0) return 0;
+
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
+
+
+function tokenize(text) {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s]/g, "")
+    .split(/\s+/)
+    .filter(word => word.length > 1);
+}
+
 
 function keywordScore(query, content) {
   const queryTokens = tokenize(query);
@@ -162,6 +172,14 @@ function rankWithHybridScore(query, docs) {
     .slice(0, TOP_K_CHUNKS);
 }
 
+function buildSources(topChunks) {
+  return topChunks.map((chunk, index) => {
+    const preview = chunk.content.slice(0, 120).trim();
+    const confidence = Number(chunk.score || chunk.vectorScore || 0).toFixed(2);
+    return `${index + 1}. ${chunk.source} | confidence: ${confidence} | "${preview}..."`;
+  });
+}
+
 async function connectMongo() {
   if (!MONGO_URI || chunksCollection) return;
 
@@ -176,97 +194,17 @@ async function connectMongo() {
     chunksCollection = db.collection(MONGO_COLLECTION);
     console.log("✅ MongoDB connected");
   } catch (error) {
-    console.warn("⚠️ MongoDB unavailable, using in-memory retrieval only.", error.message);
+    console.warn("⚠️ MongoDB unavailable, using memory.", error.message);
     chunksCollection = null;
   }
 }
 
 async function saveChunksToMongo(chunks) {
   if (!chunksCollection) return;
-
   await chunksCollection.deleteMany({});
   if (!chunks.length) return;
-
-  await chunksCollection.insertMany(chunks);
 }
 
-async function vectorSearchInMongo(question) {
-  if (!chunksCollection) return null;
-
-  const queryVector = simpleEmbedding(question);
-  const pipeline = [
-    {
-      $vectorSearch: {
-        index: MONGO_VECTOR_INDEX,
-        path: "embedding",
-        queryVector,
-        numCandidates: 50,
-        limit: TOP_K_CHUNKS,
-      },
-    },
-    {
-      $project: {
-        _id: 0,
-        content: 1,
-        source: 1,
-        embedding: 1,
-        vectorScore: { $meta: "vectorSearchScore" },
-      },
-    },
-  ];
-
-  try {
-    const vectorMatches = await chunksCollection.aggregate(pipeline).toArray();
-    if (!vectorMatches.length) return [];
-
-    return rankWithHybridScore(question, vectorMatches);
-  } catch (error) {
-    console.warn("⚠️ Vector search failed, falling back to local ranking.", error.message);
-    return null;
-  }
-}
-
-// ✅ UPLOAD
-app.post("/upload", upload.single("file"), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: "Please upload a PDF file." });
-    }
-
-    const raw = fs.readFileSync(req.file.path);
-    const parsed = await pdfParse(raw);
-    const filePath = req.file.path;
-
-    const chunks = splitIntoChunks(parsed.text || "");
-
-    if (!chunks.length) {
-      fs.unlink(filePath, () => {});
-      return res.status(400).json({ error: "No readable text found in PDF." });
-    }
-
-documents = chunks.map((content, index) => ({
-      content,
-      embedding: simpleEmbedding(content),
-      source: `Chunk ${index + 1}`,
-    }));
-
-    await saveChunksToMongo(documents);
-    chatHistory = [];
-
-    fs.unlink(filePath, () => {});
-
-    res.json({
-      message: "PDF processed successfully",
-      totalChunks: documents.length,
-      vectorStore: chunksCollection ? "mongodb" : "memory",
-    });
-  } catch (err) {
-    console.error("Upload failed:", err);
-    res.status(500).json({ error: "Failed to process PDF." });
-  }
-});
-
-// ✅ ASK (IMPROVED SEARCH + ANSWERS)
 app.post("/ask", async (req, res) => {
   try {
     const { question } = req.body;
@@ -279,7 +217,7 @@ app.post("/ask", async (req, res) => {
       return res.status(400).json({ error: "No document uploaded yet" });
     }
 
-const cleanQuestion = sanitizeAndNormalize(question).toLowerCase();
+    const cleanQuestion = sanitizeAndNormalize(question).toLowerCase();
 
     chatHistory.push({ role: "user", content: question });
 
@@ -287,89 +225,42 @@ const cleanQuestion = sanitizeAndNormalize(question).toLowerCase();
       chatHistory = chatHistory.slice(-MAX_CHAT_HISTORY * 2);
     }
 
-const vectorTopChunks = await vectorSearchInMongo(cleanQuestion);
-    const topChunks =
-      vectorTopChunks && vectorTopChunks.length
-        ? vectorTopChunks
-        : rankWithHybridScore(cleanQuestion, documents);
+    const topChunks = rankWithHybridScore(cleanQuestion, documents);
 
- if (!topChunks.length) {
-      return res.status(400).json({ error: "No retrievable chunks found" });
-    }
+    const context = topChunks
+      .map((c, index) => `[${index + 1}] ${c.content}`)
+      .join("\n\n");
 
-    const context = topChunks.map((c) => c.content).join("\n\n");
-
-    const messages = [
-      {
-        role: "system",
-        content: `
-You are a document assistant.
-
-RULES:
-- Answer ONLY using the given context
-- Combine information from multiple chunks if needed
-- If answer is partial, say "Based on available context..."
-- Do NOT hallucinate
-- Be clear and structured
-`,
-      },
-      {
-        role: "system",
-        content: `Context:\n${context}`,
-      },
-      ...chatHistory.slice(-6),
-    ];
+    const completion = await groq.chat.completions.create({
+      model: "llama-3.1-8b-instant",
+      messages: [
+        { role: "system", content: context },
+        ...chatHistory.slice(-6),
+      ],
+      stream: true,
+    });
 
     res.setHeader("Content-Type", "text/plain");
     res.setHeader("Transfer-Encoding", "chunked");
 
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
-      messages,
-      stream: true,
-    });
-
-    let fullAnswer = "";
-
     for await (const chunk of completion) {
-    
-    const content = chunk?.choices?.[0]?.delta?.content;
-
-      if (content) {
-        fullAnswer += content;
-        res.write(content);
-      }
+      const content = chunk?.choices?.[0]?.delta?.content;
+      if (content) res.write(content);
     }
-
-    chatHistory.push({
-      role: "assistant",
-      content: fullAnswer,
-    });
-
-    res.write("\n\n📄 Sources:\n" + topChunks.map((c) => c.source).join("\n"));
 
     res.end();
   } catch (err) {
-    console.error("Ask failed:", err);
-    res.status(500).json({ error: "Internal server error" });
+    console.error(err);
+    res.status(500).json({ error: "Ask failed" });
   }
 });
-
-// 🔁 RESET
 
 app.post("/reset", async (req, res) => {
   documents = [];
   chatHistory = [];
-  if (chunksCollection) {
-    await chunksCollection.deleteMany({});
-  }
   res.json({ message: "Session reset" });
 });
-
-// 🚀 START
 
 connectMongo().finally(() => {
   app.listen(5000, () => console.log("🚀 Running on 5000"));
 });
-
-// END_OF_SERVER_FILE
