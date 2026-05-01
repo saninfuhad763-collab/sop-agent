@@ -14,7 +14,7 @@ const groq = new Groq({
 
 const app = express();
 let documents = [];
-let uploadedFileName = ""; // ✅ NEW: Track uploaded file name
+let uploadedFileName = ""; // ✅ Track uploaded file name
 
 // 🧠 CHAT MEMORY
 let chatHistory = [];
@@ -34,8 +34,6 @@ const MONGO_VECTOR_INDEX = process.env.MONGO_VECTOR_INDEX || "chunk_vector_index
 let mongoClient;
 let chunksCollection;
 let MongoClientCtor = null;
-
-
 
 app.use(cors());
 app.use(express.json());
@@ -85,41 +83,61 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     }
 
     const filePath = req.file.path;
-    const fileName = req.file.originalname; // ✅ NEW: Save file name
+    const fileName = req.file.originalname; // ✅ Save file name
     const dataBuffer = fs.readFileSync(filePath);
     const pdfData = await pdfParse(dataBuffer);
 
     const text = pdfData.text;
     
-    // 🔥 Split into pages
-    const pages = text.split("\f"); // \f = page break
-
     if (!text || !text.trim()) {
       return res.status(400).json({ error: "PDF has no readable content" });
     }
 
     documents = [];
+    
+    // ✅ FIX: Use pdfParse's page info instead of splitting by \f
+    const numPages = pdfData.numpages || 1; // Get total pages
+    
+    console.log(`📖 PDF has ${numPages} pages, ${text.length} characters total`);
 
-    for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
-      const pageText = pages[pageIndex];
+    // Split text into approximate pages based on character count
+    const avgCharsPerPage = Math.ceil(text.length / numPages);
+    let pageNum = 1;
+    let currentPos = 0;
 
-      if (!pageText.trim()) continue;
-
-      // Split each page into chunks
-      const chunks = pageText.match(/.{1,800}/g) || [];
-
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i];
-
-        const embedding = getEmbedding(chunk);
-
-        documents.push({
-          content: chunk,
-          embedding,
-          page: pageIndex + 1,
-          source: `Page ${pageIndex + 1}`
-        });
+    while (currentPos < text.length) {
+      let pageEnd = Math.min(currentPos + avgCharsPerPage, text.length);
+      
+      // Find a natural break point (newline) near the page boundary
+      if (pageEnd < text.length) {
+        const nextNewline = text.indexOf('\n', pageEnd);
+        if (nextNewline !== -1 && nextNewline < pageEnd + 500) {
+          pageEnd = nextNewline;
+        }
       }
+
+      const pageText = text.substring(currentPos, pageEnd).trim();
+
+      if (pageText.length > 0) {
+        // Split page into chunks
+        const chunks = pageText.match(/.{1,800}/g) || [];
+
+        for (let i = 0; i < chunks.length; i++) {
+          const chunk = chunks[i];
+          const embedding = getEmbedding(chunk);
+
+          documents.push({
+            content: chunk,
+            embedding,
+            page: pageNum,
+            source: `Page ${pageNum}`
+          });
+        }
+
+        pageNum++; // Only increment when we actually added content
+      }
+
+      currentPos = pageEnd;
     }
 
     // ✅ NEW: Store file name
@@ -129,10 +147,13 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 
     fs.unlinkSync(filePath);
 
+    console.log(`✅ Uploaded ${documents.length} chunks from ${pageNum - 1} pages`);
+
     res.json({
       message: "PDF uploaded successfully",
-      fileName: uploadedFileName, // ✅ NEW: Return file name
+      fileName: uploadedFileName, // ✅ Return file name
       chunks: documents.length,
+      pages: pageNum - 1,
     });
   } catch (err) {
     console.error("Upload error:", err);
@@ -188,6 +209,7 @@ function keywordScore(query, content) {
   }, 0);
 }
 
+// ✅ FIXED: Removed async (not needed, returns synchronously)
 function rankWithHybridScore(query, docs) {
   const queryEmbedding = getEmbedding(query);
 
@@ -263,7 +285,8 @@ app.post("/ask", async (req, res) => {
       chatHistory = chatHistory.slice(-MAX_CHAT_HISTORY * 2);
     }
 
-    const topChunks = await rankWithHybridScore(cleanQuestion, documents);
+    // ✅ FIXED: Removed await (function is not async)
+    const topChunks = rankWithHybridScore(cleanQuestion, documents);
 
     const context = topChunks
       .map((c, index) => `[${index + 1}] ${c.content}`)
@@ -305,9 +328,13 @@ Answer clearly and directly.
       if (content) res.write(content);
     }
 
-    const sources = [...new Set(topChunks.map(c => `Page ${c.page}`))];
+    // ✅ IMPROVED: Show actual page numbers from all relevant chunks
+    const uniquePages = [...new Set(topChunks.map(c => c.page))].sort((a, b) => a - b);
+    const pageInfo = uniquePages.length > 0 
+      ? `${uniquePages.map(p => `Page ${p}`).join(", ")}`
+      : "Unknown";
 
-    res.write(`\n\n📄 Sources: ${sources.join(", ")}`);
+    res.write(`\n\n📄 Sources: ${pageInfo}`);
     res.end();
 
   } catch (err) {
