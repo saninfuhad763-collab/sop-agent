@@ -201,12 +201,12 @@ lastFileName + " ✅ Uploaded";
       addMessage("✅ PDF ready. Ask questions.", "bot");
 
    } catch (err) {
-      setStatus(err.message, "err");
-      // ✅ Show error with file name for reference
-      document.getElementById("fileName").textContent = `❌ ${lastFileName} (Failed)`;
-      document.getElementById("fileName").style.color = "var(--danger)";
-      addMessage("❌ Upload failed", "bot");
-   }
+   setStatus(err.message, "err");
+   // ✅ Show error with file name for reference
+   document.getElementById("file-name-display").textContent = `❌ ${lastFileName} (Failed)`;
+   document.getElementById("file-name-display").style.color = "var(--danger)";
+   addMessage("❌ Upload failed", "bot");
+  }
 }
 
 // ❓ Ask
@@ -272,6 +272,15 @@ async function resetSession() {
   await fetch(`${API_BASE}/reset`, { method: "POST" });
   addMessage("🔁 Session reset", "bot");
   setStatus("Session reset");
+}
+
+
+
+function openFilePicker() {
+   const input = document.getElementById("file-upload");
+   // Force reset so same file triggers change
+   input.value = "";
+   input.click();
 }
 
 
