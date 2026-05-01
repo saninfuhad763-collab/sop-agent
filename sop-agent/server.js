@@ -1,355 +1,255 @@
-// 🔧 IMPORTS
+const crypto = require("crypto");
+global.crypto = crypto;
 const cors = require("cors");
 const express = require("express");
 const multer = require("multer");
 const pdfParse = require("pdf-parse");
 const fs = require("fs");
+const { MongoClient, ObjectId } = require("mongodb");
+const Groq = require("groq-sdk");
 require("dotenv").config();
 
-const Groq = require("groq-sdk");
-
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY,
-});
-
 const app = express();
-let documents = [];
-let uploadedFileName = ""; // ✅ Track uploaded file name
-
-// 🧠 CHAT MEMORY
-let chatHistory = [];
-
-const MAX_DOCUMENT_CHUNKS = 40;
-const MAX_CHUNK_LENGTH = 1000;
-const MAX_CHAT_HISTORY = 12;
-const MIN_RELEVANCE_SCORE = 0.2;
-const VECTOR_DIMENSIONS = 200;
-
-const TOP_K_CHUNKS = 8;
-const MONGO_URI = process.env.MONGO_URI;
-const MONGO_DB_NAME = process.env.MONGO_DB_NAME || "sop_agent";
-const MONGO_COLLECTION = process.env.MONGO_COLLECTION || "document_chunks";
-const MONGO_VECTOR_INDEX = process.env.MONGO_VECTOR_INDEX || "chunk_vector_index";
-
-let mongoClient;
-let chunksCollection;
-let MongoClientCtor = null;
-
 app.use(cors());
 app.use(express.json());
+
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+
+const PORT = Number(process.env.PORT || 5000);
+const TOP_K_CHUNKS = Number(process.env.TOP_K_CHUNKS || 5);
+const EMBEDDING_DIM = Number(process.env.EMBEDDING_DIM || 256);
+
+const MONGO_URI = process.env.MONGO_URI;
+const MONGO_DB_NAME = process.env.MONGO_DB_NAME || "sop_agent";
+const DOC_COLLECTION = process.env.MONGO_DOCS_COLLECTION || "sop_documents";
+const CHUNK_COLLECTION = process.env.MONGO_CHUNKS_COLLECTION || "sop_chunks";
+const VECTOR_INDEX = process.env.MONGO_VECTOR_INDEX || "chunk_vector_index";
+
+let mongoClient;
+let docsCollection;
+let chunksCollection;
+
+const memoryStore = { documents: [], chunks: [] };
 
 const upload = multer({
   dest: "uploads/",
   fileFilter: (req, file, cb) => {
-    const isPdf =
-      file.mimetype === "application/pdf" ||
-      file.originalname.toLowerCase().endsWith(".pdf");
+    const isPdf = file.mimetype === "application/pdf" || file.originalname.toLowerCase().endsWith(".pdf");
     cb(null, isPdf);
   },
 });
 
-// ✅ ROOT
-app.get("/", (req, res) => {
-  res.send("🚀 Server is running");
-});
+function normalizeText(text) {
+  return text.replace(/\s+/g, " ").trim();
+}
 
-// 🔥 NEW EMBEDDING FUNCTION 
+function chunkText(text, chunkSize = 900, overlap = 120) {
+  const cleaned = normalizeText(text);
+  const chunks = [];
+  let start = 0;
+
+  while (start < cleaned.length) {
+    const end = Math.min(start + chunkSize, cleaned.length);
+    chunks.push(cleaned.slice(start, end));
+    if (end === cleaned.length) break;
+    start = end - overlap;
+  }
+
+  return chunks;
+}
+
 function getEmbedding(text) {
-  const words = text.toLowerCase().split(/\s+/);
-  const vector = new Array(100).fill(0);
+  const tokens = text.toLowerCase().split(/\W+/).filter(Boolean);
+  const vector = new Array(EMBEDDING_DIM).fill(0);
 
-  for (let i = 0; i < words.length; i++) {
-    const index = words[i].charCodeAt(0) % 100;
-    vector[index] += 1;
+  for (const token of tokens) {
+    let hash = 0;
+    for (let i = 0; i < token.length; i += 1) hash = ((hash << 5) - hash) + token.charCodeAt(i);
+    vector[Math.abs(hash) % EMBEDDING_DIM] += 1;
   }
 
-  return vector;
+  const magnitude = Math.sqrt(vector.reduce((sum, v) => sum + v * v, 0)) || 1;
+  return vector.map(v => v / magnitude);
 }
 
-// 🔥 NEW: Check if PDF is uploaded (for frontend validation)
-app.get("/check-upload", (req, res) => {
-  res.json({
-    isUploaded: documents.length > 0,
-    fileName: uploadedFileName,
-    chunks: documents.length
-  });
-});
-
-// 🔥 ADD THIS (UPLOAD ROUTE)
-app.post("/upload", upload.single("file"), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: "No file uploaded" });
-    }
-
-    const filePath = req.file.path;
-    const fileName = req.file.originalname; // ✅ Save file name
-    const dataBuffer = fs.readFileSync(filePath);
-    const pdfData = await pdfParse(dataBuffer);
-
-    const text = pdfData.text;
-    
-    if (!text || !text.trim()) {
-      return res.status(400).json({ error: "PDF has no readable content" });
-    }
-
-    documents = [];
-    
-    // ✅ FIX: Use pdfParse's page info instead of splitting by \f
-    const numPages = pdfData.numpages || 1; // Get total pages
-    
-    console.log(`📖 PDF has ${numPages} pages, ${text.length} characters total`);
-
-    // Split text into approximate pages based on character count
-    const avgCharsPerPage = Math.ceil(text.length / numPages);
-    let pageNum = 1;
-    let currentPos = 0;
-
-    while (currentPos < text.length) {
-      let pageEnd = Math.min(currentPos + avgCharsPerPage, text.length);
-      
-      // Find a natural break point (newline) near the page boundary
-      if (pageEnd < text.length) {
-        const nextNewline = text.indexOf('\n', pageEnd);
-        if (nextNewline !== -1 && nextNewline < pageEnd + 500) {
-          pageEnd = nextNewline;
-        }
-      }
-
-      const pageText = text.substring(currentPos, pageEnd).trim();
-
-      if (pageText.length > 0) {
-        // Split page into chunks
-        const chunks = pageText.match(/.{1,800}/g) || [];
-
-        for (let i = 0; i < chunks.length; i++) {
-          const chunk = chunks[i];
-          const embedding = getEmbedding(chunk);
-
-          documents.push({
-            content: chunk,
-            embedding,
-            page: pageNum,
-            source: `Page ${pageNum}`
-          });
-        }
-
-        pageNum++; // Only increment when we actually added content
-      }
-
-      currentPos = pageEnd;
-    }
-
-    // ✅ NEW: Store file name
-    uploadedFileName = fileName;
-
-    await saveChunksToMongo(documents);
-
-    fs.unlinkSync(filePath);
-
-    console.log(`✅ Uploaded ${documents.length} chunks from ${pageNum - 1} pages`);
-
-    res.json({
-      message: "PDF uploaded successfully",
-      fileName: uploadedFileName, // ✅ Return file name
-      chunks: documents.length,
-      pages: pageNum - 1,
-    });
-  } catch (err) {
-    console.error("Upload error:", err);
-    res.status(500).json({ error: "Upload failed" });
-  }
-});
-
-
-function sanitizeAndNormalize(text) {
-  return text
-    .toLowerCase()
-    .replace(/[^\w\s]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+function cosineSimilarity(a, b) {
+  if (!a || !b || a.length !== b.length) return 0;
+  let score = 0;
+  for (let i = 0; i < a.length; i += 1) score += a[i] * b[i];
+  return score;
 }
 
-
-function cosineSimilarity(vecA, vecB) {
-  if (!vecA || !vecB || vecA.length !== vecB.length) return 0;
-
-  let dotProduct = 0;
-  let normA = 0;
-  let normB = 0;
-
-  for (let i = 0; i < vecA.length; i++) {
-    dotProduct += vecA[i] * vecB[i];
-    normA += vecA[i] * vecA[i];
-    normB += vecB[i] * vecB[i];
+async function connectMongo() {
+  if (!MONGO_URI) {
+    console.warn("⚠️ MONGO_URI not configured: using in-memory storage only.");
+    return;
   }
 
-  if (normA === 0 || normB === 0) return 0;
-
-  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+  mongoClient = new MongoClient(MONGO_URI);
+  await mongoClient.connect();
+  const db = mongoClient.db(MONGO_DB_NAME);
+  docsCollection = db.collection(DOC_COLLECTION);
+  chunksCollection = db.collection(CHUNK_COLLECTION);
+  console.log("✅ MongoDB Atlas connected.");
 }
 
+async function saveDocumentWithChunks(fileName, pages, chunks) {
+  if (!chunksCollection || !docsCollection) {
+    memoryStore.documents.push({ id: `mem-${Date.now()}`, fileName, pages, uploadedAt: new Date().toISOString() });
+    memoryStore.chunks = chunks;
+    return { id: memoryStore.documents[memoryStore.documents.length - 1].id };
+  }
 
-function tokenize(text) {
-  return text
-    .toLowerCase()
-    .replace(/[^\w\s]/g, "")
-    .split(/\s+/)
-    .filter(word => word.length > 1);
+  const docResult = await docsCollection.insertOne({ fileName, pages, uploadedAt: new Date() });
+  const documentId = docResult.insertedId;
+
+  if (chunks.length) {
+    const rows = chunks.map(chunk => ({ ...chunk, documentId }));
+    await chunksCollection.insertMany(rows);
+  }
+
+  return { id: documentId.toString() };
 }
 
+async function retrieveTopChunks(question) {
+  const queryVector = getEmbedding(question);
 
-function keywordScore(query, content) {
-  const queryTokens = tokenize(query);
-  const contentLower = content.toLowerCase();
+  if (chunksCollection) {
+    try {
+      const result = await chunksCollection.aggregate([
+        {
+          $vectorSearch: {
+            index: VECTOR_INDEX,
+            path: "embedding",
+            queryVector,
+            numCandidates: 60,
+            limit: TOP_K_CHUNKS,
+          },
+        },
+        {
+          $project: {
+            _id: 1,
+            page: 1,
+            chunkIndex: 1,
+            content: 1,
+            fileName: 1,
+            score: { $meta: "vectorSearchScore" },
+          },
+        },
+      ]).toArray();
 
-  return queryTokens.reduce((score, token) => {
-    if (token.length < 2) return score;
-    return contentLower.includes(token) ? score + 1 : score;
-  }, 0);
-}
+      if (result.length) return result;
+    } catch (error) {
+      console.warn("⚠️ Mongo vector search unavailable, falling back to memory scoring.", error.message);
+    }
+  }
 
-// ✅ FIXED: Removed async (not needed, returns synchronously)
-function rankWithHybridScore(query, docs) {
-  const queryEmbedding = getEmbedding(query);
-
-  return docs
-    .map((doc) => {
-      const semanticScore = cosineSimilarity(queryEmbedding, doc.embedding);
-      const lexicalScore = keywordScore(query, doc.content);
-      return {
-        ...doc,
-        score: semanticScore + lexicalScore * 0.2,
-      };
-    })
+  return memoryStore.chunks
+    .map((chunk) => ({ ...chunk, score: cosineSimilarity(queryVector, chunk.embedding) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, TOP_K_CHUNKS);
 }
 
-function buildSources(topChunks) {
-  return topChunks.map((chunk, index) => {
-    const preview = chunk.content.slice(0, 120).trim();
-    const confidence = Number(chunk.score || chunk.vectorScore || 0).toFixed(2);
-    return `${index + 1}. ${chunk.source} | confidence: ${confidence} | "${preview}..."`;
-  });
-}
+app.get("/", (req, res) => res.send("OpsMind AI backend online"));
 
-async function connectMongo() {
-  if (!MONGO_URI || chunksCollection) return;
-
-  try {
-    if (!MongoClientCtor) {
-      ({ MongoClient: MongoClientCtor } = require("mongodb"));
-    }
-
-    mongoClient = new MongoClientCtor(MONGO_URI);
-    await mongoClient.connect();
-    const db = mongoClient.db(MONGO_DB_NAME);
-    chunksCollection = db.collection(MONGO_COLLECTION);
-    console.log("✅ MongoDB connected");
-  } catch (error) {
-    console.warn("⚠️ MongoDB unavailable, using memory.", error.message);
-    chunksCollection = null;
+app.get("/admin/documents", async (req, res) => {
+  if (docsCollection) {
+    const rows = await docsCollection.find({}, { projection: { fileName: 1, pages: 1, uploadedAt: 1 } }).sort({ uploadedAt: -1 }).toArray();
+    return res.json(rows.map(r => ({ id: r._id, fileName: r.fileName, pages: r.pages, uploadedAt: r.uploadedAt })));
   }
-}
 
-async function saveChunksToMongo(chunks) {
-  if (!chunksCollection) return;
+  return res.json(memoryStore.documents);
+});
 
-  await chunksCollection.deleteMany({});
+app.delete("/admin/documents/:id", async (req, res) => {
+  const { id } = req.params;
 
-  if (!chunks.length) return;
+  if (docsCollection && chunksCollection) {
+    const docId = new ObjectId(id);
+    await docsCollection.deleteOne({ _id: docId });
+    await chunksCollection.deleteMany({ documentId: docId });
+    return res.json({ message: "Document deleted and index updated." });
+  }
 
-  await chunksCollection.insertMany(chunks);
-}
+  memoryStore.documents = memoryStore.documents.filter(d => d.id !== id);
+  memoryStore.chunks = [];
+  return res.json({ message: "Memory document deleted." });
+});
 
-app.post("/ask", async (req, res) => {
+app.post("/admin/upload", upload.single("file"), async (req, res) => {
   try {
-    const { question } = req.body;
+    if (!req.file) return res.status(400).json({ error: "No PDF uploaded." });
 
-    if (!question || !question.trim()) {
-      return res.status(400).json({ error: "No question provided" });
-    }
+    const dataBuffer = fs.readFileSync(req.file.path);
+    const pdfData = await pdfParse(dataBuffer);
+    fs.unlinkSync(req.file.path);
 
-    if (!documents.length) {
-      return res.status(400).json({
-        error: "⚠️ Please upload a PDF document first."
-      });
-    }
+    if (!pdfData.text || !pdfData.text.trim()) return res.status(400).json({ error: "PDF has no extractable text." });
 
-    const cleanQuestion = sanitizeAndNormalize(question).toLowerCase();
+    const pages = pdfData.numpages || 1;
+    const rawChunks = chunkText(pdfData.text, 900, 120);
+    const chunks = rawChunks.map((content, index) => ({
+      fileName: req.file.originalname,
+      content,
+      embedding: getEmbedding(content),
+      page: Math.max(1, Math.ceil(((index + 1) / rawChunks.length) * pages)),
+      chunkIndex: index + 1,
+      source: `${req.file.originalname} | Page ~${Math.max(1, Math.ceil(((index + 1) / rawChunks.length) * pages))}`,
+    }));
 
-    chatHistory.push({ role: "user", content: question });
+    const doc = await saveDocumentWithChunks(req.file.originalname, pages, chunks);
 
-    if (chatHistory.length > MAX_CHAT_HISTORY * 2) {
-      chatHistory = chatHistory.slice(-MAX_CHAT_HISTORY * 2);
-    }
+    return res.json({ message: "Document indexed successfully.", documentId: doc.id, chunks: chunks.length, pages });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: "Upload and indexing failed." });
+  }
+});
 
-    // ✅ FIXED: Removed await (function is not async)
-    const topChunks = rankWithHybridScore(cleanQuestion, documents);
+app.get("/chat/stream", async (req, res) => {
+  const question = String(req.query.question || "").trim();
+  if (!question) return res.status(400).json({ error: "question query param required" });
 
-    const context = topChunks
-      .map((c, index) => `[${index + 1}] ${c.content}`)
-      .join("\n\n");
+  const topChunks = await retrieveTopChunks(question);
+  if (!topChunks.length) return res.status(400).json({ error: "No SOP chunks available. Upload a document first." });
 
+  const context = topChunks.map((c, i) => `[${i + 1}] ${c.content}`).join("\n\n");
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
+  try {
     const completion = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
+      model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
+      temperature: 0.1,
+      stream: true,
       messages: [
         {
           role: "system",
-          content: `
-You are an AI assistant working on a PDF document.
-
-You are given CONTEXT extracted from a PDF.
-
-Rules:
-- Answer ONLY using the context
-- The context is from a PDF document
-- If answer not found, say "I don't know"
-- Do NOT say "no PDF provided"
-
-Format:
-Answer clearly and directly.
-          `
+          content: "You are OpsMind AI. Answer strictly using provided SOP context. If missing, say 'I don't know based on the provided SOPs.' Always keep answers concise and operational.",
         },
         {
           role: "user",
-          content: `CONTEXT:\n${context}\n\nQUESTION:\n${question}`
-        }
+          content: `CONTEXT:\n${context}\n\nQUESTION:\n${question}`,
+        },
       ],
-      stream: true,
     });
 
-    res.setHeader("Content-Type", "text/plain");
-    res.setHeader("Transfer-Encoding", "chunked");
-
     for await (const chunk of completion) {
-      const content = chunk?.choices?.[0]?.delta?.content;
-      if (content) res.write(content);
+      const token = chunk?.choices?.[0]?.delta?.content;
+      if (token) res.write(`data: ${JSON.stringify({ token })}\n\n`);
     }
 
-    // ✅ IMPROVED: Show actual page numbers from all relevant chunks
-    const uniquePages = [...new Set(topChunks.map(c => c.page))].sort((a, b) => a - b);
-    const pageInfo = uniquePages.length > 0 
-      ? `${uniquePages.map(p => `Page ${p}`).join(", ")}`
-      : "Unknown";
-
-    res.write(`\n\n📄 Sources: ${pageInfo}`);
+    const citations = topChunks.map((c, i) => `${i + 1}) ${c.fileName || "SOP"}, Page ${c.page}, Chunk ${c.chunkIndex}`).join("; ");
+    res.write(`data: ${JSON.stringify({ done: true, citations })}\n\n`);
     res.end();
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Ask failed" });
+  } catch (error) {
+    res.write(`data: ${JSON.stringify({ error: "LLM streaming failed." })}\n\n`);
+    res.end();
   }
 });
 
-// ✅ NEW: Reset only chat history, NOT documents
-app.post("/reset", async (req, res) => {
-  chatHistory = [];
-  // ⚠️ Documents are NOT cleared - they persist until new upload
-  res.json({ message: "Chat session reset. PDF still loaded." });
-});
-
-connectMongo().finally(() => {
-  app.listen(5000, () => console.log("🚀 Running on 5000"));
-});
+connectMongo()
+  .catch(err => console.error("Mongo init failed:", err.message))
+  .finally(() => app.listen(PORT, () => console.log(`🚀 OpsMind AI API running on :${PORT}`)));
