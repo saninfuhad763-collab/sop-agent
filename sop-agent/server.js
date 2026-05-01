@@ -1,4 +1,8 @@
 // 🔧 IMPORTS
+
+
+
+
 const cors = require("cors");
 const express = require("express");
 const multer = require("multer");
@@ -7,6 +11,23 @@ const fs = require("fs");
 require("dotenv").config();
 
 const Groq = require("groq-sdk");
+
+
+
+// 🔥 NEW EMBEDDING FUNCTION 
+function getEmbedding(text) {
+  const words = text.toLowerCase().split(/\s+/);
+  const vector = new Array(100).fill(0);
+
+  for (let i = 0; i < words.length; i++) {
+    const index = words[i].charCodeAt(0) % 100;
+    vector[index] += 1;
+  }
+
+  return vector;
+}
+
+
 
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
@@ -24,7 +45,7 @@ const MAX_CHAT_HISTORY = 12;
 const MIN_RELEVANCE_SCORE = 0.2;
 const VECTOR_DIMENSIONS = 200;
 
-const TOP_K_CHUNKS = 6;
+const TOP_K_CHUNKS = 8;
 const MONGO_URI = process.env.MONGO_URI;
 const MONGO_DB_NAME = process.env.MONGO_DB_NAME || "sop_agent";
 const MONGO_COLLECTION = process.env.MONGO_COLLECTION || "document_chunks";
@@ -53,25 +74,16 @@ app.get("/", (req, res) => {
   res.send("🚀 Server is running");
 });
 
-// ✅ ADDED FUNCTION (ONLY CHANGE)
-function simpleEmbedding(text) {
-  const vector = new Array(200).fill(0);
-  const words = text.toLowerCase().split(/\W+/);
 
-  words.forEach(word => {
-    let hash = 0;
-    for (let i = 0; i < word.length; i++) {
-      hash += word.charCodeAt(i);
-    }
-    vector[hash % 200]++;
-  });
-
-  return vector;
-}
 
 // 🔥 ADD THIS (UPLOAD ROUTE)
 app.post("/upload", upload.single("file"), async (req, res) => {
   try {
+
+
+   
+
+
     if (!req.file) {
       return res.status(400).json({ error: "No file uploaded" });
     }
@@ -81,18 +93,41 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     const pdfData = await pdfParse(dataBuffer);
 
     const text = pdfData.text;
+    // 🔥 Split into pages
+const pages = text.split("\f"); // \f = page break
 
     if (!text || !text.trim()) {
       return res.status(400).json({ error: "PDF has no readable content" });
     }
 
-    const chunks = text.match(/.{1,1000}/g) || [];
+    
 
-    documents = chunks.map((chunk, i) => ({
+documents = [];
+
+for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+  const pageText = pages[pageIndex];
+
+  if (!pageText.trim()) continue;
+
+  // Split each page into chunks
+  const chunks = pageText.match(/.{1,800}/g) || [];
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+
+    const embedding = getEmbedding(chunk);
+
+    
+
+    documents.push({
       content: chunk,
-      embedding: simpleEmbedding(chunk),
-      source: `Chunk ${i + 1}`,
-    }));
+      embedding,
+      page: pageIndex + 1, // ✅ REAL PAGE NUMBER
+      source: `Page ${pageIndex + 1}`
+    });
+  }
+}
+
 
     await saveChunksToMongo(documents);
 
@@ -156,8 +191,10 @@ function keywordScore(query, content) {
   }, 0);
 }
 
-function rankWithHybridScore(query, docs) {
-  const queryEmbedding = simpleEmbedding(query);
+async function rankWithHybridScore(query, docs) {
+  const queryEmbedding = getEmbedding(query);
+
+
 
   return docs
     .map((doc) => {
@@ -201,12 +238,20 @@ async function connectMongo() {
 
 async function saveChunksToMongo(chunks) {
   if (!chunksCollection) return;
+
   await chunksCollection.deleteMany({});
+
   if (!chunks.length) return;
+
+  await chunksCollection.insertMany(chunks); // ✅ ADD THIS
 }
 
 app.post("/ask", async (req, res) => {
   try {
+
+
+ 
+
     const { question } = req.body;
 
     if (!question || !question.trim()) {
@@ -227,7 +272,7 @@ app.post("/ask", async (req, res) => {
       chatHistory = chatHistory.slice(-MAX_CHAT_HISTORY * 2);
     }
 
-    const topChunks = rankWithHybridScore(cleanQuestion, documents);
+    const topChunks = await rankWithHybridScore(cleanQuestion, documents);
 
     const context = topChunks
       .map((c, index) => `[${index + 1}] ${c.content}`)
@@ -236,9 +281,28 @@ app.post("/ask", async (req, res) => {
     const completion = await groq.chat.completions.create({
       model: "llama-3.1-8b-instant",
       messages: [
-        { role: "system", content: context },
-        ...chatHistory.slice(-6),
-      ],
+  {
+    role: "system",
+    content: `
+You are an AI assistant working on a PDF document.
+
+You are given CONTEXT extracted from a PDF.
+
+Rules:
+- Answer ONLY using the context
+- The context is from a PDF document
+- If answer not found, say "I don't know"
+- Do NOT say "no PDF provided"
+
+Format:
+Answer clearly and directly.
+    `
+  },
+  {
+    role: "user",
+    content: `CONTEXT:\n${context}\n\nQUESTION:\n${question}`
+  }
+],
       stream: true,
     });
 
@@ -250,7 +314,15 @@ app.post("/ask", async (req, res) => {
       if (content) res.write(content);
     }
 
-    res.end();
+      
+    
+const sources = [...new Set(topChunks.map(c => `Page ${c.page}`))];
+
+res.write(`\n\n📄 Sources: ${sources.join(", ")}`);
+res.end();
+
+
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Ask failed" });

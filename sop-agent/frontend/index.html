@@ -111,14 +111,13 @@
     <h2 class="title">OpsMind AI</h2>
     
 
-    <input type="file" id="fileInput" accept="application/pdf" hidden />
+<input type="file" id="file-upload" accept="application/pdf" hidden />
 
-    <button onclick="openFilePicker()">
-      Upload PDF
-    </button>
+<button onclick="openFilePicker()">
+  Upload PDF
+</button>
 
-
-    <p id="fileName" style="font-size:12px;color:gray;"></p>
+<p id="file-name-display" style="font-size:12px;color:gray;"></p>
 
 
     <button onclick="resetSession()">Reset</button>
@@ -173,40 +172,41 @@ function removeLoading() {
 
 // 📄 Upload
 async function uploadFile() {
-  const file = selectedFile;
+   const file = selectedFile;
 
-  if (!file) return;
+   if (!file) return;
 
+   setStatus("Uploading...");
+   const formData = new FormData();
+   formData.append("file", file);
 
-  setStatus("Uploading...");
-  const formData = new FormData();
-  formData.append("file", file);
+   try {
+      const res = await fetch(`${API_BASE}/upload`, {
+         method: "POST",
+         body: formData
+      });
 
-  try {
-    const res = await fetch(`${API_BASE}/upload`, {
-      method: "POST",
-      body: formData
-    });
+      const data = await res.json();
 
-    const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
 
-    if (!res.ok) throw new Error(data.error);
+      setStatus("PDF uploaded successfully", "ok");
+      
+      if (lastFileName) {
+  document.getElementById("file-name-display").textContent =
+lastFileName + " ✅ Uploaded";
+  document.getElementById("file-name-display").style.color = 'var(--success)';
+      }
 
-    setStatus("PDF uploaded successfully", "ok");
-   
+      addMessage("✅ PDF ready. Ask questions.", "bot");
 
-    if (lastFileName) {
-      document.getElementById("fileName").textContent =
-    lastFileName + " ✅ Uploaded";
+   } catch (err) {
+      setStatus(err.message, "err");
+      // ✅ Show error with file name for reference
+      document.getElementById("fileName").textContent = `❌ ${lastFileName} (Failed)`;
+      document.getElementById("fileName").style.color = "var(--danger)";
+      addMessage("❌ Upload failed", "bot");
    }
-
-
-    addMessage("✅ PDF ready. Ask questions.", "bot");
-
-  } catch (err) {
-    setStatus(err.message, "err");
-    addMessage("❌ Upload failed", "bot");
-  }
 }
 
 // ❓ Ask
@@ -275,14 +275,7 @@ async function resetSession() {
 }
 
 
-function openFilePicker() {
-  const input = document.getElementById("fileInput");
 
-  // Force reset so same file triggers change
-  input.value = "";
-
-  input.click();
-}
 
 
 // Enter key support
@@ -295,23 +288,28 @@ document.getElementById("question").addEventListener("keydown", e => {
 
 
 
-document.getElementById("fileInput").addEventListener("change", () => {
-  const input = document.getElementById("fileInput");
-  const file = input.files[0];
+const fileInput = document.getElementById('file-upload');
+const fileNameDisplay = document.getElementById('file-name-display');
 
-  if (!file) return;
-
-  selectedFile = file;
-
-  // ✅ Save globally
-  lastFileName = file.name;
-
-  // ✅ Always show from memory
-  document.getElementById("fileName").textContent = lastFileName;
-
-  input.value = "";
-
-  uploadFile();
+fileInput.addEventListener('change', function() {
+    const file = this.files[0];
+    if (file) {
+        // Save file globally
+        selectedFile = file;
+        lastFileName = file.name;
+        
+        // Display the file name with better visual feedback
+        fileNameDisplay.textContent = file.name;
+        fileNameDisplay.style.color = 'var(--success)';
+        fileNameDisplay.style.fontWeight = 'bold';
+        
+        // Upload the file
+        uploadFile();
+    } else {
+        // Reset display if no file chosen
+        fileNameDisplay.textContent = '';
+        fileNameDisplay.style.color = 'gray';
+    }
 });
 
 
