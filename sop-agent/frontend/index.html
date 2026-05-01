@@ -12,20 +12,29 @@
       --primary: #1b4dff;
       --text: #eef2ff;
       --border: rgba(120, 145, 255, 0.2);
-      --success: #14d59a;
+      --success: #0026ff;
       --danger: #ff5978;
     }
 
     * { box-sizing: border-box; }
 
-    body {
+    html, body {
       margin: 0;
+      padding: 0;
+      height: 100%;
+      width: 100%;
+    }
+
+    body {
       font-family: Inter, sans-serif;
       background: radial-gradient(circle at 22% 18%, rgba(27,77,255,0.32), transparent 35%), var(--bg);
+      background-attachment: fixed;
       color: var(--text);
-      display: grid;
-      place-items: center;
+      display: flex;
+      justify-content: center;
+      align-items: center;
       padding: 20px;
+      min-height: 100vh;
     }
 
     .shell {
@@ -37,15 +46,25 @@
       grid-template-columns: 280px 1fr;
       gap: 20px;
       background: #0b1020;
+      height: auto;
+      max-height: 90vh;
     }
 
     .panel {
       border-radius: 15px;
       padding: 15px;
       background: rgba(255,255,255,0.05);
+      display: flex;
+      flex-direction: column;
     }
 
-    .title { font-size: 20px; }
+    .title { 
+      font-size: 20px;
+      font-weight: bold;
+      margin-bottom: 15px;
+      margin-top: 0;
+    }
+    
     .subtitle { color: var(--muted); font-size: 13px; }
 
     input, button {
@@ -54,12 +73,19 @@
       border: none;
       margin-top: 8px;
       width: 100%;
+      font-size: 14px;
     }
 
     button {
       background: var(--primary);
       color: white;
       cursor: pointer;
+      transition: all 0.3s ease;
+    }
+
+    button:hover {
+      background: #0d3acc;
+      transform: translateY(-2px);
     }
 
     #chat {
@@ -71,12 +97,45 @@
       padding: 10px;
       border: 1px solid var(--border);
       border-radius: 10px;
+      flex-grow: 1;
+    }
+
+    /* Scrollbar styling */
+    #chat::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    #chat::-webkit-scrollbar-track {
+      background: rgba(255,255,255,0.05);
+      border-radius: 10px;
+    }
+
+    #chat::-webkit-scrollbar-thumb {
+      background: var(--primary);
+      border-radius: 10px;
+    }
+
+    #chat::-webkit-scrollbar-thumb:hover {
+      background: #0d3acc;
     }
 
     .message {
       max-width: 75%;
-      padding: 10px;
+      padding: 12px;
       border-radius: 10px;
+      word-wrap: break-word;
+      animation: slideIn 0.3s ease;
+    }
+
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
 
     .user {
@@ -88,17 +147,50 @@
     .bot {
       align-self: flex-start;
       background: rgba(255,255,255,0.1);
+      color: var(--text);
     }
 
     .composer {
       display: flex;
       gap: 10px;
       margin-top: 10px;
+      flex-shrink: 0;
+    }
+
+    .composer input {
+      flex-grow: 1;
+      margin-top: 0;
+    }
+
+    .composer button {
+      flex-shrink: 0;
+      width: auto;
+      min-width: 80px;
+      margin-top: 0;
     }
 
     #status {
       font-size: 12px;
       color: var(--muted);
+      margin-top: 10px;
+      margin-bottom: 0;
+    }
+
+    #file-name-display {
+      font-size: 12px;
+      color: gray;
+      margin: 8px 0;
+      min-height: 18px;
+    }
+
+    aside {
+      display: flex;
+      flex-direction: column;
+    }
+
+    section {
+      display: flex;
+      flex-direction: column;
     }
   </style>
 </head>
@@ -109,16 +201,14 @@
 
   <aside class="panel">
     <h2 class="title">OpsMind AI</h2>
-    
 
-<input type="file" id="file-upload" accept="application/pdf" hidden />
+    <input type="file" id="file-upload" accept="application/pdf" hidden />
 
-<button onclick="openFilePicker()">
-  Upload PDF
-</button>
+    <button onclick="openFilePicker()">
+      Upload PDF
+    </button>
 
-<p id="file-name-display" style="font-size:12px;color:gray;"></p>
-
+    <p id="file-name-display"></p>
 
     <button onclick="resetSession()">Reset</button>
 
@@ -141,7 +231,7 @@ const API_BASE = "http://localhost:5000";
 let loadingDiv = null;
 let selectedFile = null;
 let lastFileName = "";
-let documentsLoaded = false; // ✅ NEW: Track if PDF is loaded
+let documentsLoaded = false;
 
 function setStatus(text, tone="") {
   const status = document.getElementById("status");
@@ -189,9 +279,8 @@ async function uploadFile() {
 
     if (!res.ok) throw new Error(data.error);
 
-    // ✅ Mark as loaded
     documentsLoaded = true;
-    setStatus("PDF uploaded successfully", "ok");
+    setStatus("PDF uploaded successfully ✓", "ok");
     
     if (lastFileName) {
       const display = document.getElementById("file-name-display");
@@ -200,7 +289,7 @@ async function uploadFile() {
       display.style.fontWeight = 'bold';
     }
 
-    addMessage(`✅ PDF ready! (${data.chunks} chunks loaded)`, "bot");
+    addMessage(`✅ PDF ready! (${data.chunks} chunks from ${data.pages} pages)`, "bot");
 
   } catch (err) {
     documentsLoaded = false;
@@ -266,13 +355,12 @@ async function askQuestion() {
   }
 }
 
-// 🔁 Reset - Only clears chat, NOT documents
+// 🔁 Reset
 async function resetSession() {
   await fetch(`${API_BASE}/reset`, { method: "POST" });
   addMessage("🔁 Chat reset. PDF still loaded.", "bot");
   setStatus("Chat reset. PDF ready.", "ok");
   
-  // ✅ Show file name again
   if (documentsLoaded && lastFileName) {
     const display = document.getElementById("file-name-display");
     display.textContent = `✅ ${lastFileName}`;
@@ -297,26 +385,22 @@ const fileNameDisplay = document.getElementById('file-name-display');
 fileInput.addEventListener('change', function() {
     const file = this.files[0];
     if (file) {
-        // Save file globally
         selectedFile = file;
         lastFileName = file.name;
         
-        // Display the file name with loading indicator
         fileNameDisplay.textContent = `⏳ ${file.name}`;
         fileNameDisplay.style.color = 'var(--muted)';
         fileNameDisplay.style.fontWeight = 'bold';
         
-        // Upload the file
         uploadFile();
     } else {
-        // Reset display if no file chosen
         documentsLoaded = false;
         fileNameDisplay.textContent = '';
         fileNameDisplay.style.color = 'gray';
     }
 });
 
-// ✅ NEW: Check upload status on page load
+// Check upload status on page load
 window.addEventListener('load', async () => {
   try {
     const res = await fetch(`${API_BASE}/check-upload`);
@@ -325,17 +409,15 @@ window.addEventListener('load', async () => {
     if (data.isUploaded && data.fileName) {
       documentsLoaded = true;
       lastFileName = data.fileName;
-      fileNameDisplay.textContent = `✅ ${data.fileName}`;
+      fileNameDisplay.textContent = `✅ ${data.fileName} `;
       fileNameDisplay.style.color = 'var(--success)';
       fileNameDisplay.style.fontWeight = 'bold';
-      setStatus(`PDF LOADED...`, "ok");
+      setStatus(`PDF Loaded successfully ✔️`, "ok");
     }
   } catch (err) {
     console.log("No PDF loaded yet");
   }
 });
-
-
 
 </script>
 
