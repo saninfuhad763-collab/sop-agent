@@ -1,8 +1,4 @@
 // 🔧 IMPORTS
-
-
-
-
 const cors = require("cors");
 const express = require("express");
 const multer = require("multer");
@@ -12,29 +8,13 @@ require("dotenv").config();
 
 const Groq = require("groq-sdk");
 
-
-
-// 🔥 NEW EMBEDDING FUNCTION 
-function getEmbedding(text) {
-  const words = text.toLowerCase().split(/\s+/);
-  const vector = new Array(100).fill(0);
-
-  for (let i = 0; i < words.length; i++) {
-    const index = words[i].charCodeAt(0) % 100;
-    vector[index] += 1;
-  }
-
-  return vector;
-}
-
-
-
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
 
 const app = express();
 let documents = [];
+let uploadedFileName = ""; // ✅ NEW: Track uploaded file name
 
 // 🧠 CHAT MEMORY
 let chatHistory = [];
@@ -55,7 +35,8 @@ let mongoClient;
 let chunksCollection;
 let MongoClientCtor = null;
 
-// ✅ FIXED CORS
+
+
 app.use(cors());
 app.use(express.json());
 
@@ -74,60 +55,75 @@ app.get("/", (req, res) => {
   res.send("🚀 Server is running");
 });
 
+// 🔥 NEW EMBEDDING FUNCTION 
+function getEmbedding(text) {
+  const words = text.toLowerCase().split(/\s+/);
+  const vector = new Array(100).fill(0);
 
+  for (let i = 0; i < words.length; i++) {
+    const index = words[i].charCodeAt(0) % 100;
+    vector[index] += 1;
+  }
+
+  return vector;
+}
+
+// 🔥 NEW: Check if PDF is uploaded (for frontend validation)
+app.get("/check-upload", (req, res) => {
+  res.json({
+    isUploaded: documents.length > 0,
+    fileName: uploadedFileName,
+    chunks: documents.length
+  });
+});
 
 // 🔥 ADD THIS (UPLOAD ROUTE)
 app.post("/upload", upload.single("file"), async (req, res) => {
   try {
-
-
-   
-
-
     if (!req.file) {
       return res.status(400).json({ error: "No file uploaded" });
     }
 
     const filePath = req.file.path;
+    const fileName = req.file.originalname; // ✅ NEW: Save file name
     const dataBuffer = fs.readFileSync(filePath);
     const pdfData = await pdfParse(dataBuffer);
 
     const text = pdfData.text;
+    
     // 🔥 Split into pages
-const pages = text.split("\f"); // \f = page break
+    const pages = text.split("\f"); // \f = page break
 
     if (!text || !text.trim()) {
       return res.status(400).json({ error: "PDF has no readable content" });
     }
 
-    
+    documents = [];
 
-documents = [];
+    for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+      const pageText = pages[pageIndex];
 
-for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
-  const pageText = pages[pageIndex];
+      if (!pageText.trim()) continue;
 
-  if (!pageText.trim()) continue;
+      // Split each page into chunks
+      const chunks = pageText.match(/.{1,800}/g) || [];
 
-  // Split each page into chunks
-  const chunks = pageText.match(/.{1,800}/g) || [];
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
 
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
+        const embedding = getEmbedding(chunk);
 
-    const embedding = getEmbedding(chunk);
+        documents.push({
+          content: chunk,
+          embedding,
+          page: pageIndex + 1,
+          source: `Page ${pageIndex + 1}`
+        });
+      }
+    }
 
-    
-
-    documents.push({
-      content: chunk,
-      embedding,
-      page: pageIndex + 1, // ✅ REAL PAGE NUMBER
-      source: `Page ${pageIndex + 1}`
-    });
-  }
-}
-
+    // ✅ NEW: Store file name
+    uploadedFileName = fileName;
 
     await saveChunksToMongo(documents);
 
@@ -135,6 +131,7 @@ for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
 
     res.json({
       message: "PDF uploaded successfully",
+      fileName: uploadedFileName, // ✅ NEW: Return file name
       chunks: documents.length,
     });
   } catch (err) {
@@ -191,10 +188,8 @@ function keywordScore(query, content) {
   }, 0);
 }
 
-async function rankWithHybridScore(query, docs) {
+function rankWithHybridScore(query, docs) {
   const queryEmbedding = getEmbedding(query);
-
-
 
   return docs
     .map((doc) => {
@@ -243,15 +238,11 @@ async function saveChunksToMongo(chunks) {
 
   if (!chunks.length) return;
 
-  await chunksCollection.insertMany(chunks); // ✅ ADD THIS
+  await chunksCollection.insertMany(chunks);
 }
 
 app.post("/ask", async (req, res) => {
   try {
-
-
- 
-
     const { question } = req.body;
 
     if (!question || !question.trim()) {
@@ -259,10 +250,10 @@ app.post("/ask", async (req, res) => {
     }
 
     if (!documents.length) {
-  return res.status(400).json({
-    error: "⚠️ Please upload a PDF document first."
-  });
-}
+      return res.status(400).json({
+        error: "⚠️ Please upload a PDF document first."
+      });
+    }
 
     const cleanQuestion = sanitizeAndNormalize(question).toLowerCase();
 
@@ -281,9 +272,9 @@ app.post("/ask", async (req, res) => {
     const completion = await groq.chat.completions.create({
       model: "llama-3.1-8b-instant",
       messages: [
-  {
-    role: "system",
-    content: `
+        {
+          role: "system",
+          content: `
 You are an AI assistant working on a PDF document.
 
 You are given CONTEXT extracted from a PDF.
@@ -296,13 +287,13 @@ Rules:
 
 Format:
 Answer clearly and directly.
-    `
-  },
-  {
-    role: "user",
-    content: `CONTEXT:\n${context}\n\nQUESTION:\n${question}`
-  }
-],
+          `
+        },
+        {
+          role: "user",
+          content: `CONTEXT:\n${context}\n\nQUESTION:\n${question}`
+        }
+      ],
       stream: true,
     });
 
@@ -314,14 +305,10 @@ Answer clearly and directly.
       if (content) res.write(content);
     }
 
-      
-    
-const sources = [...new Set(topChunks.map(c => `Page ${c.page}`))];
+    const sources = [...new Set(topChunks.map(c => `Page ${c.page}`))];
 
-res.write(`\n\n📄 Sources: ${sources.join(", ")}`);
-res.end();
-
-
+    res.write(`\n\n📄 Sources: ${sources.join(", ")}`);
+    res.end();
 
   } catch (err) {
     console.error(err);
@@ -329,10 +316,11 @@ res.end();
   }
 });
 
+// ✅ NEW: Reset only chat history, NOT documents
 app.post("/reset", async (req, res) => {
-  documents = [];
   chatHistory = [];
-  res.json({ message: "Session reset" });
+  // ⚠️ Documents are NOT cleared - they persist until new upload
+  res.json({ message: "Chat session reset. PDF still loaded." });
 });
 
 connectMongo().finally(() => {

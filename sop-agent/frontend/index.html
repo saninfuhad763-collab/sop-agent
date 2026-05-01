@@ -139,15 +139,14 @@
 <script>
 const API_BASE = "http://localhost:5000";
 let loadingDiv = null;
-
 let selectedFile = null;
-
 let lastFileName = "";
+let documentsLoaded = false; // ✅ NEW: Track if PDF is loaded
 
 function setStatus(text, tone="") {
   const status = document.getElementById("status");
   status.textContent = text;
-  status.style.color = tone === "ok" ? "green" : tone === "err" ? "red" : "";
+  status.style.color = tone === "ok" ? "var(--success)" : tone === "err" ? "var(--danger)" : "";
 }
 
 function addMessage(text, sender) {
@@ -172,40 +171,41 @@ function removeLoading() {
 
 // 📄 Upload
 async function uploadFile() {
-   const file = selectedFile;
+  const file = selectedFile;
 
-   if (!file) return;
+  if (!file) return;
 
-   setStatus("Uploading...");
-   const formData = new FormData();
-   formData.append("file", file);
+  setStatus("Uploading...");
+  const formData = new FormData();
+  formData.append("file", file);
 
-   try {
-      const res = await fetch(`${API_BASE}/upload`, {
-         method: "POST",
-         body: formData
-      });
+  try {
+    const res = await fetch(`${API_BASE}/upload`, {
+      method: "POST",
+      body: formData
+    });
 
-      const data = await res.json();
+    const data = await res.json();
 
-      if (!res.ok) throw new Error(data.error);
+    if (!res.ok) throw new Error(data.error);
 
-      setStatus("PDF uploaded successfully", "ok");
-      
-      if (lastFileName) {
-  document.getElementById("file-name-display").textContent =
-lastFileName + " ✅ Uploaded";
-  document.getElementById("file-name-display").style.color = 'var(--success)';
-      }
+    // ✅ Mark as loaded
+    documentsLoaded = true;
+    setStatus("PDF uploaded successfully", "ok");
+    
+    if (lastFileName) {
+      const display = document.getElementById("file-name-display");
+      display.textContent = `✅ ${lastFileName}`;
+      display.style.color = 'var(--success)';
+      display.style.fontWeight = 'bold';
+    }
 
-      addMessage("✅ PDF ready. Ask questions.", "bot");
+    addMessage(`✅ PDF ready! (${data.chunks} chunks loaded)`, "bot");
 
-   } catch (err) {
-   setStatus(err.message, "err");
-   // ✅ Show error with file name for reference
-   document.getElementById("file-name-display").textContent = `❌ ${lastFileName} (Failed)`;
-   document.getElementById("file-name-display").style.color = "var(--danger)";
-   addMessage("❌ Upload failed", "bot");
+  } catch (err) {
+    documentsLoaded = false;
+    setStatus(err.message, "err");
+    addMessage("❌ Upload failed: " + err.message, "bot");
   }
 }
 
@@ -229,17 +229,16 @@ async function askQuestion() {
          
 
     if (!response.ok) {
-  const errData = await response.json();
+      const errData = await response.json();
 
-  removeLoading();
+      removeLoading();
 
-  const message = errData.error || "Something went wrong";
+      const message = errData.error || "Something went wrong";
 
-  addMessage( message, "bot");
+      addMessage(message, "bot");
 
-  return;
-}     
-
+      return;
+    }     
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -267,35 +266,30 @@ async function askQuestion() {
   }
 }
 
-// 🔁 Reset
+// 🔁 Reset - Only clears chat, NOT documents
 async function resetSession() {
   await fetch(`${API_BASE}/reset`, { method: "POST" });
-  addMessage("🔁 Session reset", "bot");
-  setStatus("Session reset");
+  addMessage("🔁 Chat reset. PDF still loaded.", "bot");
+  setStatus("Chat reset. PDF ready.", "ok");
+  
+  // ✅ Show file name again
+  if (documentsLoaded && lastFileName) {
+    const display = document.getElementById("file-name-display");
+    display.textContent = `✅ ${lastFileName}`;
+    display.style.color = 'var(--success)';
+  }
 }
-
-
 
 function openFilePicker() {
-   const input = document.getElementById("file-upload");
-   // Force reset so same file triggers change
-   input.value = "";
-   input.click();
+  const input = document.getElementById("file-upload");
+  input.value = "";
+  input.click();
 }
-
-
-
-
 
 // Enter key support
 document.getElementById("question").addEventListener("keydown", e => {
   if (e.key === "Enter") askQuestion();
 });
-
-
-
-
-
 
 const fileInput = document.getElementById('file-upload');
 const fileNameDisplay = document.getElementById('file-name-display');
@@ -307,18 +301,38 @@ fileInput.addEventListener('change', function() {
         selectedFile = file;
         lastFileName = file.name;
         
-        // Display the file name with better visual feedback
-        fileNameDisplay.textContent = file.name;
-        fileNameDisplay.style.color = 'var(--success)';
+        // Display the file name with loading indicator
+        fileNameDisplay.textContent = `⏳ ${file.name}`;
+        fileNameDisplay.style.color = 'var(--muted)';
         fileNameDisplay.style.fontWeight = 'bold';
         
         // Upload the file
         uploadFile();
     } else {
         // Reset display if no file chosen
+        documentsLoaded = false;
         fileNameDisplay.textContent = '';
         fileNameDisplay.style.color = 'gray';
     }
+});
+
+// ✅ NEW: Check upload status on page load
+window.addEventListener('load', async () => {
+  try {
+    const res = await fetch(`${API_BASE}/check-upload`);
+    const data = await res.json();
+    
+    if (data.isUploaded && data.fileName) {
+      documentsLoaded = true;
+      lastFileName = data.fileName;
+      fileNameDisplay.textContent = `✅ ${data.fileName}`;
+      fileNameDisplay.style.color = 'var(--success)';
+      fileNameDisplay.style.fontWeight = 'bold';
+      setStatus(`PDF loaded (${data.chunks} chunks)`, "ok");
+    }
+  } catch (err) {
+    console.log("No PDF loaded yet");
+  }
 });
 
 
