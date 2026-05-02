@@ -1,111 +1,12 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>OpsMind AI</title>
-  <style>
-    body{font-family:Arial,sans-serif;background:#081022;color:#f0f4ff;margin:0}
-    .wrap{max-width:1100px;margin:20px auto;display:grid;grid-template-columns:320px 1fr;gap:16px}
-    .card{background:#121a33;border:1px solid #2d3c6e;border-radius:12px;padding:14px}
-    button,input{padding:10px;border-radius:8px;border:none}
-    button{background:#2d5bff;color:#fff;cursor:pointer}
-    #chat{height:460px;overflow:auto;background:#0a1022;border-radius:10px;padding:10px}
-    .msg{padding:10px;border-radius:8px;margin:8px 0;max-width:80%}
-    .user{background:#2d5bff;margin-left:auto}
-    .bot{background:#1b264b}
-    ul{padding-left:18px}
-    .row{display:flex;gap:8px}
-    .row input{flex:1}
-    small{color:#98a2c7}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="card">
-      <h2>OpsMind AI</h2>
-      <p><small>Admin Knowledge Base</small></p>
-      <input type="file" id="file" accept="application/pdf" />
-      <button onclick="uploadPdf()" style="width:100%;margin-top:8px">Upload + Reindex</button>
-      <hr/>
-      <strong>Indexed SOPs</strong>
-      <ul id="docs"></ul>
-      <p id="status"><small>Ready.</small></p>
-    </div>
-
-    <div class="card">
-      <h3>Employee Assistant (SSE Streaming)</h3>
-      <div id="chat"></div>
-      <div class="row" style="margin-top:8px">
-        <input id="question" placeholder="How do I process a refund?" />
-        <button onclick="ask()">Ask</button>
-      </div>
-    </div>
-  </div>
-
-<script>
-const API = "http://localhost:5000";
-
-function addMessage(text, cls) {
-  const d = document.createElement("div");
-  d.className = `msg ${cls}`;
-  d.innerHTML = text.replace(/\n/g,"<br>");
-  const chat = document.getElementById("chat");
-  chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
-  return d;
-}
-
-async function loadDocs(){
-  const res = await fetch(`${API}/admin/documents`);
-  const docs = await res.json();
-  const ul = document.getElementById("docs");
-  ul.innerHTML = "";
-  docs.forEach(doc => {
-    const li = document.createElement("li");
-    li.innerHTML = `${doc.fileName} (${doc.pages || "?"}p) <button onclick="removeDoc('${doc.id}')">Delete</button>`;
-    ul.appendChild(li);
-  });
-}
-
-async function removeDoc(id){
-  await fetch(`${API}/admin/documents/${id}`, { method:"DELETE" });
-  document.getElementById("status").innerHTML = "<small>Document deleted.</small>";
-  await loadDocs();
-}
-
-async function uploadPdf(){
-  const file = document.getElementById("file").files[0];
-  if(!file){ alert("Select a PDF first."); return; }
-  const form = new FormData(); form.append("file", file);
-  const res = await fetch(`${API}/admin/upload`, { method:"POST", body: form });
-  const data = await res.json();
-  if(!res.ok){ alert(data.error || "Upload failed"); return; }
-  document.getElementById("status").innerHTML = `<small>${data.message} (${data.chunks} chunks)</small>`;
-  await loadDocs();
-}
-
-function ask(){
-  const q = document.getElementById("question").value.trim();
-  if(!q) return;
-  addMessage(q, "user");
-  const bot = addMessage("", "bot");
-
-  const es = new EventSource(`${API}/chat/stream?question=${encodeURIComponent(q)}`);
-  let answer = "";
-
-  es.onmessage = (evt) => {
-    const payload = JSON.parse(evt.data);
-    if(payload.token){ answer += payload.token; bot.innerHTML = answer.replace(/\n/g,"<br>"); }
-    if(payload.done){ bot.innerHTML += `<hr><small>Sources: ${payload.citations}</small>`; es.close(); }
-    if(payload.error){ bot.innerHTML = `❌ ${payload.error}`; es.close(); }
-  };
-
-  es.onerror = () => { es.close(); };
-  document.getElementById("question").value = "";
-}
-
-document.getElementById("question").addEventListener("keydown", (e)=>{ if(e.key==="Enter") ask(); });
-loadDocs();
-</script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpsMind AI</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
 </html>
