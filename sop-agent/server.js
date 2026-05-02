@@ -30,13 +30,13 @@ const memoryStore = { documents: [], chunks: [] };
 
 const upload = multer({
   dest: "uploads/",
-fileFilter: (req, file, cb) => {
+  fileFilter: (req, file, cb) => {
     const isPdfByMime = file.mimetype === "application/pdf";
     const isPdfByName = /\.pdf$/i.test(file.originalname || "");
 
     if (isPdfByMime || isPdfByName) return cb(null, true);
     return cb(new Error("Only PDF files are supported."));
-  }, 
+  },
 });
 
 function getEmbedding(text) {
@@ -57,12 +57,23 @@ function cosineSimilarity(a, b) {
 }
 
 async function connectMongo() {
-  if (!MONGO_URI) return;
-  const client = new MongoClient(MONGO_URI);
-  await client.connect();
-  const db = client.db(MONGO_DB_NAME);
-  docsCollection = db.collection(DOC_COLLECTION);
-  chunksCollection = db.collection(CHUNK_COLLECTION);
+  if (!MONGO_URI) {
+    console.warn("Mongo URI missing. Running with in-memory document store.");
+    return;
+  }
+
+  try {
+    const client = new MongoClient(MONGO_URI, { serverSelectionTimeoutMS: 5000 });
+    await client.connect();
+    const db = client.db(MONGO_DB_NAME);
+    docsCollection = db.collection(DOC_COLLECTION);
+    chunksCollection = db.collection(CHUNK_COLLECTION);
+    console.log(`Mongo connected: ${MONGO_DB_NAME}`);
+  } catch (error) {
+    docsCollection = null;
+    chunksCollection = null;
+    console.warn(`Mongo connection failed (${error.code || error.name}). Using in-memory store.`);
+  }
 }
 
 async function createLangChainChunks(text) {
