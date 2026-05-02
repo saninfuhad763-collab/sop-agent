@@ -30,7 +30,13 @@ const memoryStore = { documents: [], chunks: [] };
 
 const upload = multer({
   dest: "uploads/",
-  fileFilter: (req, file, cb) => cb(null, file.mimetype === "application/pdf" || file.originalname.endsWith(".pdf")),
+fileFilter: (req, file, cb) => {
+    const isPdfByMime = file.mimetype === "application/pdf";
+    const isPdfByName = /\.pdf$/i.test(file.originalname || "");
+
+    if (isPdfByMime || isPdfByName) return cb(null, true);
+    return cb(new Error("Only PDF files are supported."));
+  }, 
 });
 
 function getEmbedding(text) {
@@ -118,7 +124,12 @@ app.delete("/admin/documents/:id", async (req, res) => {
   res.json({ message: "Document deleted." });
 });
 
-app.post("/admin/upload", upload.single("file"), async (req, res) => {
+app.post("/admin/upload", (req, res, next) => {
+  upload.single("file")(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message || "Upload failed" });
+    return next();
+  });
+}, async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "No PDF uploaded." });
     const buffer = fs.readFileSync(req.file.path);

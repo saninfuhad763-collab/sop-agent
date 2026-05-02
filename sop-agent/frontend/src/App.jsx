@@ -20,6 +20,7 @@ export default function App() {
   }, []);
 
   const upload = async (file) => {
+    setStatus('Uploading PDF...');
     const fd = new FormData();
     fd.append('file', file);
     const res = await fetch(`${API}/admin/upload`, { method: 'POST', body: fd });
@@ -29,7 +30,7 @@ export default function App() {
       return;
     }
 
-    setStatus(`Indexed ${data.chunks} chunks`);
+    setStatus(`Indexed ${data.chunks} chunks from ${data.pages} page(s)`);
     loadDocs();
   };
 
@@ -41,6 +42,14 @@ export default function App() {
   const handleFileSelect = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+    if (!isPdf) {
+      setStatus('Please choose a valid PDF file.');
+      e.target.value = '';
+      return;
+    }
+
     upload(file);
     e.target.value = '';
   };
@@ -74,7 +83,7 @@ export default function App() {
     <div className="page">
       <div className="hero-shell">
         <header className="top-nav">
-          <div className="brand">AI X+</div>
+          <div className="brand">OpsMind AI</div>
           <nav>
             <a href="#">Home</a>
             <a href="#">About</a>
@@ -106,7 +115,16 @@ export default function App() {
               accept="application/pdf"
               onChange={handleFileSelect}
             />
-            <button className="upload-pill" onClick={() => fileInputRef.current?.click()}>
+            <button
+              className="upload-pill"
+              type="button"
+              onClick={() => {
+                if (fileInputRef.current) {
+                  fileInputRef.current.value = "";
+                  fileInputRef.current.click();
+                }
+              }}
+            >
               Upload PDF
             </button>
 
