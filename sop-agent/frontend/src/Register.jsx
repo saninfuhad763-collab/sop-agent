@@ -3,39 +3,135 @@ import { useState } from "react";
 const API = "http://localhost:5000";
 
 export default function Register({ goToLogin }) {
-  const [form, setForm] = useState({ name: "", email: "", password: "" });
+  const [form, setForm] = useState({
+    name: "",
+    email: "",
+    password: "",
+  });
+
+  const [loading, setLoading] = useState(false);
 
   const register = async (e) => {
     e.preventDefault();
 
-    const res = await fetch(`${API}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
-    });
+    try {
+      setLoading(true);
 
-    const data = await res.json();
+      const res = await fetch(`${API}/auth/register`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(form),
+      });
 
-    if (!res.ok) {
-      alert(data.error);
-      return;
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error || "Registration failed");
+        return;
+      }
+
+      alert("Registered successfully");
+      goToLogin();
+    } catch (err) {
+      alert("Server error");
+    } finally {
+      setLoading(false);
     }
-
-    alert("Registered successfully");
-    goToLogin();
   };
 
   return (
-    <div className="auth-page">
-      <form onSubmit={register}>
-        <h2>Register</h2>
-        <input placeholder="Name" onChange={(e) => setForm({ ...form, name: e.target.value })} />
-        <input placeholder="Email" onChange={(e) => setForm({ ...form, email: e.target.value })} />
-        <input type="password" placeholder="Password" onChange={(e) => setForm({ ...form, password: e.target.value })} />
-        <button>Register</button>
+    <div className="auth-wrapper">
+      <div className="auth-left">
+        <div className="overlay"></div>
 
-        <p onClick={goToLogin}>Back to Login</p>
-      </form>
+        <div className="auth-brand-content">
+          <p className="mini-title">OpsMind AI</p>
+
+          <h1>
+            Build Smarter
+            <span> Operational Workflows</span>
+          </h1>
+
+          <p>
+            Create your account and streamline SOP management with
+            AI-powered automation, instant search, and operational insights.
+          </p>
+        </div>
+      </div>
+
+      <div className="auth-right">
+        <form className="auth-card" onSubmit={register}>
+          <div>
+            <h2>Create Account</h2>
+
+            <p className="auth-subtitle">
+              Join OpsMind AI and manage SOPs efficiently.
+            </p>
+          </div>
+
+          <div className="input-group">
+            <label>Full Name</label>
+
+            <input
+              type="text"
+              placeholder="Enter your name"
+              value={form.name}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  name: e.target.value,
+                })
+              }
+              required
+            />
+          </div>
+
+          <div className="input-group">
+            <label>Email Address</label>
+
+            <input
+              type="email"
+              placeholder="Enter your email"
+              value={form.email}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  email: e.target.value,
+                })
+              }
+              required
+            />
+          </div>
+
+          <div className="input-group">
+            <label>Password</label>
+
+            <input
+              type="password"
+              placeholder="Create password"
+              value={form.password}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  password: e.target.value,
+                })
+              }
+              required
+            />
+          </div>
+
+          <button className="auth-btn" type="submit">
+            {loading ? "Creating Account..." : "Register"}
+          </button>
+
+          <p className="switch-auth">
+            Already have an account?
+            <span onClick={goToLogin}> Login</span>
+          </p>
+        </form>
+      </div>
     </div>
   );
 }
