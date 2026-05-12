@@ -11,11 +11,11 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const fileInputRef = useRef(null);
 
-  useEffect(() => {
-    if (!token) {
-      window.location.reload();
-    }
-  }, [token]);
+  // useEffect(() => {
+  //   if (!token) {
+  //     window.location.reload();
+  //   }
+  // }, [token]);
 
   const loadDocs = async () => {
     try {
