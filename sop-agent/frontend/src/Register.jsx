@@ -32,8 +32,8 @@ export default function Register({ goToLogin }) {
         return;
       }
 
-      alert("Registered successfully");
-      goToLogin();
+      localStorage.setItem("token", data.token);
+      window.location.reload();
     } catch (err) {
       alert("Server error");
     } finally {

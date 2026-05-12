@@ -161,8 +161,15 @@ app.post("/auth/register", async (req, res) => {
       memoryUsers.push(userData);
     }
 
+    const token = jwt.sign(
+      { email: userData.email },
+      JWT_SECRET,
+      { expiresIn: "1d" }
+    );
+
     res.json({
       message: "Registered successfully",
+      token
     });
 
   } catch (error) {
