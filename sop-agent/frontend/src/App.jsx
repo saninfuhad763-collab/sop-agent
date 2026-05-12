@@ -3,16 +3,39 @@ import { useEffect, useRef, useState } from 'react';
 const API = 'http://localhost:5000';
 
 export default function App() {
+  const token = localStorage.getItem('token');
+
   const [docs, setDocs] = useState([]);
   const [status, setStatus] = useState('Ready');
   const [question, setQuestion] = useState('');
   const [messages, setMessages] = useState([]);
   const fileInputRef = useRef(null);
 
+  // useEffect(() => {
+  //   if (!token) {
+  //     window.location.reload();
+  //   }
+  // }, [token]);
+
   const loadDocs = async () => {
-    const res = await fetch(`${API}/admin/documents`);
-    const data = await res.json();
-    setDocs(data);
+    try {
+      const res = await fetch(`${API}/admin/documents`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setStatus(data.error || 'Failed to load documents');
+        return;
+      }
+
+      setDocs(data);
+    } catch (err) {
+      setStatus('Server error');
+    }
   };
 
   useEffect(() => {
@@ -21,29 +44,56 @@ export default function App() {
 
   const upload = async (file) => {
     setStatus('Uploading PDF...');
+
     const fd = new FormData();
     fd.append('file', file);
-    const res = await fetch(`${API}/admin/upload`, { method: 'POST', body: fd });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus(data.error || 'Upload failed');
-      return;
-    }
 
-    setStatus(`Indexed ${data.chunks} chunks from ${data.pages} page(s)`);
-    loadDocs();
+    try {
+      const res = await fetch(`${API}/admin/upload`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: fd,
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setStatus(data.error || 'Upload failed');
+        return;
+      }
+
+      setStatus(`Indexed ${data.chunks} chunks from ${data.pages} page(s)`);
+
+      loadDocs();
+    } catch (err) {
+      setStatus('Upload failed');
+    }
   };
 
   const removeDoc = async (id) => {
-    await fetch(`${API}/admin/documents/${id}`, { method: 'DELETE' });
-    loadDocs();
+    try {
+      await fetch(`${API}/admin/documents/${id}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      loadDocs();
+    } catch (err) {
+      setStatus('Delete failed');
+    }
   };
 
   const handleFileSelect = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+    const isPdf =
+      file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+
     if (!isPdf) {
       setStatus('Please choose a valid PDF file.');
       e.target.value = '';
@@ -51,6 +101,7 @@ export default function App() {
     }
 
     upload(file);
+
     e.target.value = '';
   };
 
@@ -58,54 +109,111 @@ export default function App() {
     if (!question.trim()) return;
 
     const q = question;
-    setMessages((m) => [...m, { role: 'user', text: q }, { role: 'bot', text: '', citations: '' }]);
+
+    setMessages((m) => [
+      ...m,
+      { role: 'user', text: q },
+      { role: 'bot', text: '', citations: '' },
+    ]);
+
     setQuestion('');
 
-    const es = new EventSource(`${API}/chat/stream?question=${encodeURIComponent(q)}`);
+    const es = new EventSource(
+      `${API}/chat/stream?question=${encodeURIComponent(
+        q
+      )}&token=${token}`
+    );
+
     es.onmessage = (evt) => {
       const payload = JSON.parse(evt.data);
+
       setMessages((curr) => {
         const copy = [...curr];
+
         const idx = copy.length - 1;
 
-        if (payload.token) copy[idx].text += payload.token;
-        if (payload.done) copy[idx].citations = payload.citations;
-        if (payload.error) copy[idx].text = payload.error;
+        if (payload.token) {
+          copy[idx].text += payload.token;
+        }
+
+        if (payload.done) {
+          copy[idx].citations = payload.citations;
+        }
+
+        if (payload.error) {
+          copy[idx].text = payload.error;
+        }
 
         return copy;
       });
 
-      if (payload.done || payload.error) es.close();
+      if (payload.done || payload.error) {
+        es.close();
+      }
     };
+  };
+
+  const logout = () => {
+    localStorage.removeItem('token');
+    window.location.reload();
   };
 
   return (
     <div className="page">
       <div className="hero-shell">
+
         <header className="top-nav">
           <div className="brand">OpsMind AI</div>
+
           <nav>
             <a href="#">Home</a>
             <a href="#">About</a>
             <a href="#">Pages</a>
             <a href="#">Contact</a>
           </nav>
-          <button className="ghost-btn">Get started</button>
+
+          <div className="nav-actions">
+            <button
+              className="ghost-btn"
+              onClick={() => {
+                if (fileInputRef.current) {
+                  fileInputRef.current.value = '';
+                  fileInputRef.current.click();
+                }
+              }}
+            >
+              Upload PDF
+            </button>
+
+            <button className="primary-btn" onClick={logout}>
+              Logout
+            </button>
+          </div>
         </header>
 
         <section className="hero-copy">
           <p className="eyebrow">SOP automation platform</p>
-          <h1>All you need to integrate AI with your operations</h1>
+
+          <h1>
+            All you need to integrate AI with your operations
+          </h1>
+
           <p>
-            Upload SOP documents, ask questions in real time, and manage knowledge in a clean single-panel experience.
+            Upload SOP documents, ask questions in real time,
+            and manage knowledge in a clean single-panel
+            experience.
           </p>
         </section>
 
         <section className="main-panel">
+
           <article className="panel-block upload-block">
             <div>
               <h3>Document Control</h3>
-              <p>Upload and maintain SOP files in one place.</p>
+
+              <p>
+                Upload and maintain SOP files in one place.
+              </p>
             </div>
 
             <input
@@ -115,12 +223,13 @@ export default function App() {
               accept="application/pdf"
               onChange={handleFileSelect}
             />
+
             <button
               className="upload-pill"
               type="button"
               onClick={() => {
                 if (fileInputRef.current) {
-                  fileInputRef.current.value = "";
+                  fileInputRef.current.value = '';
                   fileInputRef.current.click();
                 }
               }}
@@ -129,49 +238,67 @@ export default function App() {
             </button>
 
             <p className="status">{status}</p>
+
             <ul className="doc-list">
               {docs.map((doc) => (
                 <li key={doc.id}>
                   <span>{doc.fileName}</span>
-                  <button className="danger-btn" onClick={() => removeDoc(doc.id)}>
+
+                  <button
+                    className="danger-btn"
+                    onClick={() => removeDoc(doc.id)}
+                  >
                     Delete
                   </button>
                 </li>
               ))}
             </ul>
           </article>
-
           <article className="panel-block chat-block">
             <div>
               <h3>Ops Copilot</h3>
-              <p>Ask process questions and stream answers with citations.</p>
+
+              <p>
+                Ask process questions and stream answers
+                with citations.
+              </p>
             </div>
+
             <div className="chat-box">
               {messages.map((m, i) => (
                 <div className={`msg ${m.role}`} key={i}>
                   <div>{m.text}</div>
-                  {m.citations && <small>Sources: {m.citations}</small>}
+
+                  {m.citations && (
+                    <small>Sources: {m.citations}</small>
+                  )}
                 </div>
               ))}
             </div>
+
             <div className="ask-bar">
               <input
                 value={question}
                 onChange={(e) => setQuestion(e.target.value)}
                 placeholder="How do I process refund?"
               />
-              <button className="primary-btn" onClick={ask}>
+
+              <button
+                className="primary-btn"
+                onClick={ask}
+              >
                 Ask
               </button>
             </div>
           </article>
-
           <article className="panel-block recent-block">
             <h3>Recent SOPs</h3>
+
             <div className="list-card">
               {docs.map((doc) => (
                 <div className="doc-row" key={doc.id}>
                   <strong>{doc.fileName}</strong>
+
                   <p>{doc.pages || '?'} pages</p>
                 </div>
               ))}

@@ -9,6 +9,9 @@ const { RecursiveCharacterTextSplitter } = require("@langchain/textsplitters");
 const Groq = require("groq-sdk");
 require("dotenv").config();
 
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -24,9 +27,13 @@ const DOC_COLLECTION = process.env.MONGO_DOCS_COLLECTION || "sop_documents";
 const CHUNK_COLLECTION = process.env.MONGO_CHUNKS_COLLECTION || "sop_chunks";
 const VECTOR_INDEX = process.env.MONGO_VECTOR_INDEX || "chunk_vector_index";
 
+const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
+
 let docsCollection;
 let chunksCollection;
+let usersCollection;
 const memoryStore = { documents: [], chunks: [] };
+const memoryUsers = [];
 
 const upload = multer({
   dest: "uploads/",
@@ -68,6 +75,7 @@ async function connectMongo() {
     const db = client.db(MONGO_DB_NAME);
     docsCollection = db.collection(DOC_COLLECTION);
     chunksCollection = db.collection(CHUNK_COLLECTION);
+    usersCollection = db.collection("users");
     console.log(`Mongo connected: ${MONGO_DB_NAME}`);
   } catch (error) {
     docsCollection = null;
@@ -114,6 +122,98 @@ async function retrieveTopChunks(question) {
     .sort((a, b) => b.score - a.score)
     .slice(0, TOP_K_CHUNKS);
 }
+
+app.post("/auth/register", async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        error: "Email and password required",
+      });
+    }
+
+    let existingUser;
+
+    if (usersCollection) {
+      existingUser = await usersCollection.findOne({ email });
+    } else {
+      existingUser = memoryUsers.find((u) => u.email === email);
+    }
+
+    if (existingUser) {
+      return res.status(400).json({
+        error: "User already exists",
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const userData = {
+      name,
+      email,
+      password: hashedPassword,
+    };
+
+    if (usersCollection) {
+      await usersCollection.insertOne(userData);
+    } else {
+      memoryUsers.push(userData);
+    }
+
+    res.json({
+      message: "Registered successfully",
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      error: "Registration failed",
+    });
+  }
+});
+app.post("/auth/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    let user;
+
+    if (usersCollection) {
+      user = await usersCollection.findOne({ email });
+    } else {
+      user = memoryUsers.find((u) => u.email === email);
+    }
+
+    if (!user) {
+      return res.status(400).json({
+        error: "Invalid credentials",
+      });
+    }
+
+    const match = await bcrypt.compare(
+      password,
+      user.password
+    );
+
+    if (!match) {
+      return res.status(400).json({
+        error: "Invalid credentials",
+      });
+    }
+
+    const token = jwt.sign(
+      { email: user.email },
+      JWT_SECRET,
+      { expiresIn: "1d" }
+    );
+
+    res.json({ token });
+
+  } catch (error) {
+    res.status(500).json({
+      error: "Login failed",
+    });
+  }
+});
 
 app.get("/admin/documents", async (req, res) => {
   if (docsCollection) {
@@ -206,5 +306,7 @@ app.get("/chat/stream", async (req, res) => {
 app.use(express.static(path.join(__dirname, "frontend", "dist")));
 
 connectMongo().finally(() => {
+  console.log(process.env.GROQ_API_KEY);
+  console.log(process.env.GROQ_MODEL);
   app.listen(PORT, () => console.log(`OpsMind API on :${PORT}`));
 });
