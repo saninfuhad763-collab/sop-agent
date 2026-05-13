@@ -1,3 +1,8 @@
+const crypto = require("crypto");
+if (!global.crypto) {
+  global.crypto = crypto.webcrypto;
+}
+
 const cors = require("cors");
 const express = require("express");
 const multer = require("multer");
@@ -125,7 +130,7 @@ async function retrieveTopChunks(question) {
 
 app.post("/auth/register", async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    let { name, email, password } = req.body;
 
     if (!email || !password) {
       return res.status(400).json({
@@ -134,6 +139,8 @@ app.post("/auth/register", async (req, res) => {
     }
 
     let existingUser;
+
+    email = email.trim().toLowerCase();
 
     if (usersCollection) {
       existingUser = await usersCollection.findOne({ email });
@@ -180,9 +187,11 @@ app.post("/auth/register", async (req, res) => {
 });
 app.post("/auth/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
+    let { email, password } = req.body;
 
     let user;
+
+    email = email.trim().toLowerCase();
 
     if (usersCollection) {
       user = await usersCollection.findOne({ email });
