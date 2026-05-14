@@ -2,7 +2,7 @@ import { useState } from "react";
 
 const API = "http://localhost:5000";
 
-export default function Login({ goToRegister }) {
+export default function Login({ goToRegister, goToHome }) {
   const [form, setForm] = useState({
     email: "",
     password: "",
@@ -64,6 +64,14 @@ export default function Login({ goToRegister }) {
       <div className="auth-right">
         <form className="auth-card" onSubmit={login}>
           <div>
+            {goToHome && (
+              <div 
+                onClick={goToHome} 
+                style={{ color: '#64748b', fontSize: '13px', cursor: 'pointer', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '4px' }}
+              >
+                &larr; Back to Home
+              </div>
+            )}
             <h2>Welcome Back</h2>
 
             <p className="auth-subtitle">
