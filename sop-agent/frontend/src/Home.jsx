@@ -6,9 +6,6 @@ export default function Home({ goToLogin, goToRegister, goToDashboard, hasToken 
       <header className="home-nav">
         <div className="brand">OpsMind AI</div>
         <nav>
-          <a href="#features">Features</a>
-          <a href="#about">About</a>
-          <a href="#pricing">Pricing</a>
         </nav>
         <div className="nav-actions">
           {hasToken ? (
@@ -28,7 +25,7 @@ export default function Home({ goToLogin, goToRegister, goToDashboard, hasToken 
         <section className="home-hero">
           <div className="hero-content">
             <p className="eyebrow">The Future of Operations</p>
-            <h1 className="home-title">
+            <h1 className="home-title text-3d-anim">
               Your Operations,<br />
               <span className="highlight-text">Supercharged by AI</span>
             </h1>
@@ -80,6 +77,16 @@ export default function Home({ goToLogin, goToRegister, goToDashboard, hasToken 
             <h3>Real-time Sync</h3>
             <p>Keep your entire team perfectly aligned with the latest procedures instantly.</p>
           </div>
+        </section>
+
+        <section id="about" className="home-about animate-pop-3d">
+          <h2 className="text-3d-anim">About OpsMind AI</h2>
+          <p>
+            OpsMind AI is designed to be the ultimate companion for your operations team. By simply uploading your standard operating procedures, policies, and manuals, our AI engine understands and retrieves exact answers in real-time.
+          </p>
+          <p>
+            Stop wasting time digging through scattered documents. Centralize your knowledge base and empower your employees with a chat-driven interface that knows your company's processes inside and out.
+          </p>
         </section>
       </main>
 
