@@ -39,5 +39,5 @@ export default function Root() {
     return <Login goToRegister={() => setPage("register")} goToHome={() => setPage("home")} />;
   }
 
-  return <App />;
+  return <App goToHome={() => setPage("home")} />;
 }

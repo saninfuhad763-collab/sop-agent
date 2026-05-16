@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 
 const API = 'http://localhost:5000';
 
-export default function App() {
+export default function App({ goToHome }) {
   const token = localStorage.getItem('token');
 
   const [docs, setDocs] = useState([]);
@@ -163,10 +163,10 @@ export default function App() {
       <div className="hero-shell">
 
         <header className="top-nav">
-          <div className="brand">OpsMind AI</div>
+          <div className="brand" onClick={goToHome} style={{ cursor: 'pointer' }}>OpsMind AI</div>
 
           <nav>
-            <a href="#">Home</a>
+            <a href="#" onClick={(e) => { e.preventDefault(); goToHome(); }}>Home</a>
             <a href="#">About</a>
             <a href="#">Pages</a>
             <a href="#">Contact</a>
