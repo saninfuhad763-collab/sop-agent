@@ -165,24 +165,14 @@ export default function App({ goToHome }) {
         <header className="top-nav">
           <div className="brand" onClick={goToHome} style={{ cursor: 'pointer' }}>OpsMind AI</div>
 
-          <nav>
-            <a href="#" onClick={(e) => { e.preventDefault(); goToHome(); }}>Home</a>
-            <a href="#">About</a>
-            <a href="#">Pages</a>
-            <a href="#">Contact</a>
-          </nav>
+
 
           <div className="nav-actions">
             <button
               className="ghost-btn"
-              onClick={() => {
-                if (fileInputRef.current) {
-                  fileInputRef.current.value = '';
-                  fileInputRef.current.click();
-                }
-              }}
+              onClick={goToHome}
             >
-              Upload PDF
+              Home
             </button>
 
             <button className="primary-btn" onClick={logout}>
