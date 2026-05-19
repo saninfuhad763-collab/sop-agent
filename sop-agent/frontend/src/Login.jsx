@@ -71,7 +71,7 @@ export default function Login({ goToRegister, goToHome, goToDashboard }) {
             {goToHome && (
               <div 
                 onClick={goToHome} 
-                style={{ color: '#64748b', fontSize: '13px', cursor: 'pointer', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                className="auth-back-link"
               >
                 &larr; Back to Home
               </div>

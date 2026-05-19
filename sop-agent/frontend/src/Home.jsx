@@ -8,20 +8,17 @@ export default function Home({ goToLogin, goToRegister, goToDashboard, hasToken 
 
         {/* ── Navigation ── */}
         <header className="hw-nav">
-          <div className="hw-brand">
-            <span className="hw-brand-icon">◉</span>
-            <span className="hw-brand-name">OpsMind AI</span>
+          <div className="brand" onClick={goToDashboard} style={{ cursor: 'pointer' }}>
+            OpsMind AI
           </div>
           <nav className="hw-nav-links">
-            <a href="#hero">Home</a>
+            <a href="#" onClick={(e) => { e.preventDefault(); goToDashboard(); }}>Dashboard</a>
             <a href="#features">Features</a>
             <a href="#about">About</a>
             <a href="#contact">Contact</a>
           </nav>
           <div className="hw-nav-actions">
-            {hasToken ? (
-              <button className="hw-btn-ghost" onClick={goToDashboard}>Dashboard</button>
-            ) : (
+            {!hasToken && (
               <>
                 <button className="hw-btn-ghost" onClick={goToLogin}>Sign in</button>
                 <button className="hw-btn-primary" onClick={goToRegister}>Get started</button>
@@ -34,11 +31,13 @@ export default function Home({ goToLogin, goToRegister, goToDashboard, hasToken 
         <section className="hw-hero" id="hero">
           {/* Left copy */}
           <div className="hw-hero-copy">
-            <div className="hw-badge">WE'VE LAUNCHED OPSMIND AI 2.0. CHECK IT OUT</div>
             <h1 className="hw-h1">
               The easiest way<br />
-              to power up your<br />
-              <span className="hw-accent">operations with AI</span>
+              To power up<br />
+              <span className="hw-accent">
+                Your operations<br />
+                Using powerful AI
+              </span>
             </h1>
             <p className="hw-lead">
               Upload SOP documents, query complex processes in real-time, and
@@ -121,30 +120,44 @@ export default function Home({ goToLogin, goToRegister, goToDashboard, hasToken 
 
         {/* ── Feature cards — fills bottom of shell ── */}
         <section className="hw-cards" id="features">
-          <div className="hw-card" style={{ backgroundImage: "url('/card_doc.png')" }}>
-            <div className="hw-card-overlay"></div>
-            <div className="hw-card-body">
-              <div className="hw-card-icon">📚</div>
-              <h3 className="hw-card-title">Document Control</h3>
-              <p className="hw-card-desc">Centralize your SOPs and manuals. Easy PDF upload and secure organization.</p>
+          <div className="hw-feature-card">
+            <div className="hw-fc-img" style={{ backgroundImage: "url('/feature_1.png')" }}></div>
+            <div className="hw-fc-body">
+              <h3 className="hw-fc-title">Upload <span className="hw-fc-blue">&</span> Centralize<br />Your SOPs</h3>
+              <p className="hw-fc-desc">Upload SOP documents, policies, and processes in any format. All your knowledge, in one place.</p>
+              <div className="hw-fc-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+              </div>
             </div>
           </div>
-
-          <div className="hw-card" style={{ backgroundImage: "url('/card_ai.png')" }}>
-            <div className="hw-card-overlay"></div>
-            <div className="hw-card-body">
-              <div className="hw-card-icon">🤖</div>
-              <h3 className="hw-card-title">AI Copilot</h3>
-              <p className="hw-card-desc">Get instant answers to operational queries with fully cited internal sources.</p>
+          <div className="hw-feature-card">
+            <div className="hw-fc-img" style={{ backgroundImage: "url('/feature_2.png')" }}></div>
+            <div className="hw-fc-body">
+              <h3 className="hw-fc-title">AI Copilot for<br />Instant Answers</h3>
+              <p className="hw-fc-desc">Ask questions in natural language and get accurate answers instantly from your SOPs.</p>
+              <div className="hw-fc-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path><circle cx="8" cy="10" r="1"></circle><circle cx="12" cy="10" r="1"></circle><circle cx="16" cy="10" r="1"></circle></svg>
+              </div>
             </div>
           </div>
-
-          <div className="hw-card" style={{ backgroundImage: "url('/card_sync.png')" }}>
-            <div className="hw-card-overlay"></div>
-            <div className="hw-card-body">
-              <div className="hw-card-icon">⚡</div>
-              <h3 className="hw-card-title">Real-time Sync</h3>
-              <p className="hw-card-desc">Keep your entire team perfectly aligned with the latest procedures instantly.</p>
+          <div className="hw-feature-card">
+            <div className="hw-fc-img" style={{ backgroundImage: "url('/feature_3.png')" }}></div>
+            <div className="hw-fc-body">
+              <h3 className="hw-fc-title">Smart Search <span className="hw-fc-blue">&</span><br />Knowledge Discovery</h3>
+              <p className="hw-fc-desc">Find what you need, faster. AI understands context and surfaces the most relevant information.</p>
+              <div className="hw-fc-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              </div>
+            </div>
+          </div>
+          <div className="hw-feature-card">
+            <div className="hw-fc-img" style={{ backgroundImage: "url('/feature_4.png')" }}></div>
+            <div className="hw-fc-body">
+              <h3 className="hw-fc-title">Secure, Compliant<br /><span className="hw-fc-blue">&</span> Enterprise Ready</h3>
+              <p className="hw-fc-desc">Enterprise-grade security, role-based access, and compliance built in to keep your data safe.</p>
+              <div className="hw-fc-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+              </div>
             </div>
           </div>
         </section>
