@@ -237,6 +237,17 @@ button {
   font-size: 11px;
 }
 
+.upgrade-btn {
+  background: linear-gradient(135deg, #5b9aff 0%, #2f66eb 100%);
+  box-shadow: 0 4px 18px rgba(47, 102, 235, 0.35);
+}
+
+.upgrade-btn:hover {
+  filter: brightness(1.12);
+  box-shadow: 0 8px 24px rgba(47, 102, 235, 0.55);
+  transform: translateY(-1px);
+}
+
 .list-card {
   display: grid;
   gap: 8px;
@@ -1370,3 +1381,607 @@ button:hover,
   }
 }
 
+
+/* ═══════════════════════════════════════════════════════════════
+   PRICING PAGE  –  perfectly matched to dashboard design system
+   All classes prefixed pricing- to avoid conflicts
+═══════════════════════════════════════════════════════════════ */
+
+/* ── Page wrapper ── */
+.pricing-page {
+  min-height: 100vh;
+  background: radial-gradient(circle at 15% 20%, #193a9c 0%, #09103b 32%, #05071f 100%);
+  font-family: 'Inter', sans-serif;
+  color: #dfe8ff;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Top nav (matches dashboard .top-nav) ── */
+.pricing-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 48px;
+  border-bottom: 1px solid rgba(80, 120, 240, 0.15);
+  background: rgba(4, 9, 28, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+/* ── Main content area ── */
+.pricing-content {
+  flex: 1;
+  max-width: 1180px;
+  width: 92%;
+  margin: 0 auto;
+  padding: 60px 0 80px;
+}
+
+/* ── Hero section ── */
+.pricing-hero {
+  text-align: center;
+  margin-bottom: 60px;
+  animation: pricingFadeUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.pricing-eyebrow {
+  display: inline-block;
+  border: 1px solid rgba(54, 95, 203, 0.52);
+  border-radius: 99px;
+  padding: 5px 14px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  color: #98b8ff;
+  text-transform: uppercase;
+  margin-bottom: 20px;
+  animation: pricingFadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.05s both;
+}
+
+.pricing-title {
+  font-size: clamp(32px, 4.5vw, 52px);
+  font-weight: 800;
+  letter-spacing: -1px;
+  line-height: 1.18;
+  color: #f0f5ff;
+  margin: 0 0 18px;
+  animation: pricingFadeUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.1s both;
+}
+
+.pricing-accent {
+  background: linear-gradient(135deg, #4b87ff 0%, #a78bfa 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.pricing-subtitle {
+  font-size: 17px;
+  color: #9db2ea;
+  max-width: 520px;
+  margin: 0 auto 36px;
+  line-height: 1.65;
+  animation: pricingFadeUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
+}
+
+/* ── Billing toggle ── */
+.billing-toggle {
+  display: inline-flex;
+  gap: 4px;
+  background: linear-gradient(180deg, #0c1a4d 0%, #0b143c 100%);
+  border: 1px solid rgba(79, 109, 197, 0.3);
+  border-radius: 14px;
+  padding: 5px;
+  animation: pricingFadeUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.2s both;
+}
+
+.toggle-btn {
+  background: transparent;
+  border: none;
+  color: #8fa3c8;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 9px 22px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toggle-btn.active {
+  background: linear-gradient(135deg, #2f66eb 0%, #1d4ed8 100%);
+  color: #fff;
+  box-shadow: 0 4px 16px rgba(47, 102, 235, 0.45);
+  transform: none;
+}
+
+.toggle-btn:hover:not(.active) {
+  color: #dde8ff;
+  background: rgba(80, 120, 240, 0.1);
+  transform: none;
+  box-shadow: none;
+}
+
+.toggle-badge {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 99px;
+  letter-spacing: 0.3px;
+}
+
+/* ── Plan cards grid ── */
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  margin-bottom: 70px;
+  align-items: start;
+}
+
+/* ── Individual plan card ── */
+.plan-card {
+  position: relative;
+  border-radius: 20px;
+  background: linear-gradient(165deg, #070c2e 0%, #090a26 45%, #09081b 100%);
+  border: 1px solid rgba(60, 87, 184, 0.24);
+  padding: 32px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.35s ease;
+  animation: pricingFadeUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.plan-card:hover,
+.plan-card--hovered {
+  transform: translateY(-6px);
+  box-shadow: 0 28px 60px rgba(0, 0, 0, 0.5);
+  border-color: rgba(80, 130, 255, 0.4);
+}
+
+/* Highlighted Pro card */
+.plan-card--highlight {
+  background: linear-gradient(165deg, #0d1a50 0%, #0c1640 50%, #091030 100%);
+  border-color: rgba(75, 135, 255, 0.45);
+  box-shadow: 0 20px 60px rgba(37, 99, 235, 0.2);
+  transform: scale(1.02);
+}
+
+.plan-card--highlight:hover,
+.plan-card--highlight.plan-card--hovered {
+  transform: scale(1.02) translateY(-6px);
+  box-shadow: 0 36px 70px rgba(37, 99, 235, 0.35);
+}
+
+/* Ambient glow orb on Pro card */
+.plan-glow {
+  position: absolute;
+  top: -80px;
+  right: -80px;
+  width: 240px;
+  height: 240px;
+  background: radial-gradient(circle, rgba(47, 102, 235, 0.25) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+/* ── Plan badge (Most Popular) ── */
+.plan-badge {
+  display: inline-block;
+  background: linear-gradient(135deg, #4b87ff 0%, #a78bfa 100%);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 4px 12px;
+  border-radius: 99px;
+  margin-bottom: 20px;
+  width: fit-content;
+}
+
+/* ── Plan header ── */
+.plan-header {
+  margin-bottom: 24px;
+}
+
+.plan-name {
+  font-size: 20px;
+  font-weight: 700;
+  color: #e8f0ff;
+  margin: 0 0 14px;
+}
+
+.plan-price-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  margin-bottom: 4px;
+}
+
+.plan-currency {
+  font-size: 22px;
+  font-weight: 700;
+  color: #b8cfee;
+  margin-bottom: 6px;
+}
+
+.plan-price {
+  font-size: 52px;
+  font-weight: 800;
+  color: #f0f5ff;
+  line-height: 1;
+  letter-spacing: -2px;
+  transition: all 0.3s ease;
+}
+
+.plan-period {
+  font-size: 15px;
+  color: #6b84ae;
+  margin-left: 4px;
+}
+
+.plan-billed-note {
+  font-size: 12px;
+  color: #10b981;
+  margin: 4px 0 0;
+  font-weight: 500;
+}
+
+.plan-desc {
+  font-size: 13.5px;
+  color: #8fa3c8;
+  line-height: 1.55;
+  margin: 14px 0 0;
+}
+
+/* ── CTA button ── */
+.plan-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 13px 20px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-bottom: 28px;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  border: none;
+}
+
+.plan-cta--primary {
+  background: linear-gradient(135deg, #4b87ff 0%, #2e63de 100%);
+  color: #fff;
+  box-shadow: 0 8px 28px rgba(47, 102, 235, 0.5);
+}
+
+.plan-cta--primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 36px rgba(47, 102, 235, 0.65);
+  filter: brightness(1.08);
+}
+
+.plan-cta--ghost {
+  background: transparent;
+  color: #b8cfee;
+  border: 1px solid rgba(79, 109, 197, 0.4) !important;
+}
+
+.plan-cta--ghost:hover {
+  background: rgba(80, 120, 240, 0.1);
+  border-color: rgba(79, 109, 197, 0.7) !important;
+  color: #dde8ff;
+  transform: translateY(-2px);
+  box-shadow: none;
+  filter: none;
+}
+
+.plan-cta--disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.cta-arrow {
+  font-size: 16px;
+  transition: transform 0.2s ease;
+}
+
+.plan-cta:hover .cta-arrow {
+  transform: translateX(4px);
+}
+
+/* ── Feature list ── */
+.plan-features {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid rgba(80, 120, 240, 0.12);
+  padding-top: 24px;
+}
+
+.plan-feature {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13.5px;
+}
+
+.plan-feature--on {
+  color: #c8deff;
+}
+
+.plan-feature--off {
+  color: rgba(107, 132, 174, 0.5);
+}
+
+.feature-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.plan-feature--on .feature-icon {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.plan-feature--off .feature-icon {
+  background: rgba(107, 132, 174, 0.08);
+  color: rgba(107, 132, 174, 0.4);
+  border: 1px solid rgba(107, 132, 174, 0.15);
+}
+
+/* ── Perks strip ── */
+.perks-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+  background: linear-gradient(165deg, #070c2e 0%, #09081b 100%);
+  border: 1px solid rgba(60, 87, 184, 0.24);
+  border-radius: 20px;
+  padding: 32px 36px;
+  margin-bottom: 40px;
+  animation: pricingFadeUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.35s both;
+}
+
+.perk-item {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.perk-icon {
+  font-size: 26px;
+  flex-shrink: 0;
+  line-height: 1;
+  margin-top: 2px;
+}
+
+.perk-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #e8f0ff;
+  margin: 0 0 5px;
+}
+
+.perk-desc {
+  font-size: 12.5px;
+  color: #6b84ae;
+  margin: 0;
+  line-height: 1.55;
+}
+
+/* ── Bottom CTA strip ── */
+.pricing-cta-strip {
+  text-align: center;
+  padding: 36px;
+  border: 1px solid rgba(60, 87, 184, 0.2);
+  border-radius: 18px;
+  background: rgba(9, 16, 59, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  animation: pricingFadeUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.4s both;
+}
+
+.cta-strip-text {
+  margin: 0;
+  font-size: 16px;
+  color: #9db2ea;
+}
+
+.cta-strip-btn {
+  padding: 11px 28px !important;
+  border-radius: 10px !important;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+/* ── Animations ── */
+@keyframes pricingFadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── Responsive ── */
+@media (max-width: 900px) {
+  .pricing-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .plan-card--highlight {
+    transform: none;
+  }
+
+  .plan-card--highlight:hover {
+    transform: translateY(-4px);
+  }
+
+  .perks-strip {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .pricing-nav {
+    padding: 16px 24px;
+  }
+
+  .pricing-cta-strip {
+    flex-direction: column;
+    gap: 16px;
+  }
+}
+
+@media (max-width: 600px) {
+  .perks-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .pricing-title {
+    font-size: 30px;
+  }
+}
+
+/* -----------------------------------------------
+   LOGOUT CONFIRMATION MODAL
+----------------------------------------------- */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(2, 6, 23, 0.75);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: modalFadeIn 0.2s ease both;
+}
+
+.modal-card {
+  background: linear-gradient(165deg, #070c2e 0%, #090a26 50%, #09081b 100%);
+  border: 1px solid rgba(80, 120, 240, 0.28);
+  border-radius: 24px;
+  padding: 40px 36px 32px;
+  width: min(420px, 90vw);
+  text-align: center;
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, 0.7),
+    0 0 0 1px rgba(255, 255, 255, 0.04);
+  animation: modalSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.modal-icon {
+  font-size: 40px;
+  margin-bottom: 16px;
+  line-height: 1;
+}
+
+.modal-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #f0f5ff;
+  margin: 0 0 10px;
+}
+
+.modal-desc {
+  font-size: 14px;
+  color: #7b90ba;
+  line-height: 1.6;
+  margin: 0 0 28px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.modal-cancel {
+  background: transparent;
+  border: 1px solid rgba(79, 109, 197, 0.45) !important;
+  color: #a8beef;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 11px 28px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex: 1;
+}
+
+.modal-cancel:hover {
+  background: rgba(80, 120, 240, 0.1);
+  color: #dde8ff;
+  transform: translateY(-1px);
+  box-shadow: none;
+  filter: none;
+}
+
+.modal-confirm {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 11px 28px;
+  border-radius: 12px;
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 6px 20px rgba(239, 68, 68, 0.4);
+  transition: all 0.2s ease;
+  flex: 1;
+}
+
+.modal-confirm:hover {
+  filter: brightness(1.1);
+  box-shadow: 0 10px 28px rgba(239, 68, 68, 0.55);
+  transform: translateY(-1px);
+}
+
+@keyframes modalFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes modalSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}

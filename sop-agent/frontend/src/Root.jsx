@@ -3,10 +3,11 @@ import App from "./App";
 import Login from "./Login";
 import Register from "./Register";
 import Home from "./Home";
+import Pricing from "./Pricing";
 
 export default function Root() {
   const token = localStorage.getItem("token");
-  const [page, setPage] = useState("home");
+  const [page, setPage] = useState(token ? "dashboard" : "home");
 
   if (page === "home") {
     return (
@@ -39,5 +40,9 @@ export default function Root() {
     return <Login goToRegister={() => setPage("register")} goToHome={() => setPage("home")} goToDashboard={() => setPage("dashboard")} />;
   }
 
-  return <App goToHome={() => setPage("home")} />;
+  if (page === "pricing") {
+    return <Pricing goToDashboard={() => setPage("dashboard")} goToHome={() => setPage("home")} />;
+  }
+
+  return <App goToHome={() => setPage("home")} goToPricing={() => setPage("pricing")} />;
 }

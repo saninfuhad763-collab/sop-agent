@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 
 const API = 'http://localhost:5000';
 
-export default function App({ goToHome }) {
+export default function App({ goToHome, goToPricing }) {
   const token = localStorage.getItem('token');
 
   const [docs, setDocs] = useState([]);
   const [status, setStatus] = useState('Ready');
   const [question, setQuestion] = useState('');
   const [messages, setMessages] = useState([]);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
   const fileInputRef = useRef(null);
 
   // useEffect(() => {
@@ -153,7 +154,7 @@ export default function App({ goToHome }) {
     };
   };
 
-  const logout = () => {
+  const confirmLogout = () => {
     localStorage.removeItem('token');
     window.location.reload();
   };
@@ -175,7 +176,14 @@ export default function App({ goToHome }) {
               Home
             </button>
 
-            <button className="primary-btn" onClick={logout}>
+            <button
+              className="upgrade-btn"
+              onClick={goToPricing}
+            >
+              ⚡ Upgrade to Pro
+            </button>
+
+            <button className="primary-btn" onClick={() => setShowLogoutModal(true)}>
               Logout
             </button>
           </div>
@@ -296,6 +304,25 @@ export default function App({ goToHome }) {
           </article>
         </section>
       </div>
+
+      {/* ── Logout Confirmation Modal ── */}
+      {showLogoutModal && (
+        <div className="modal-overlay" onClick={() => setShowLogoutModal(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-icon">🔓</div>
+            <h3 className="modal-title">Sign out?</h3>
+            <p className="modal-desc">You'll need to log back in to access your dashboard and documents.</p>
+            <div className="modal-actions">
+              <button className="modal-cancel" onClick={() => setShowLogoutModal(false)}>
+                Cancel
+              </button>
+              <button className="modal-confirm" onClick={confirmLogout}>
+                Yes, sign out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
