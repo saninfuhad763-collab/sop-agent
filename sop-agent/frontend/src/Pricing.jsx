@@ -70,7 +70,7 @@ const perks = [
   { icon: '🌍', title: '99.9% Uptime SLA', desc: 'Reliable infrastructure backed by a strong SLA guarantee.' },
 ];
 
-export default function Pricing({ goToDashboard, goToHome }) {
+export default function Pricing({ goToDashboard, goToHome, onUpgrade }) {
   const [billing, setBilling] = useState('monthly');
   const [hoveredPlan, setHoveredPlan] = useState(null);
 
@@ -154,6 +154,7 @@ export default function Pricing({ goToDashboard, goToHome }) {
               <button
                 className={`plan-cta ${plan.highlight ? 'plan-cta--primary' : 'plan-cta--ghost'} ${plan.ctaDisabled ? 'plan-cta--disabled' : ''}`}
                 disabled={plan.ctaDisabled}
+                onClick={() => !plan.ctaDisabled && onUpgrade && onUpgrade(plan, billing)}
               >
                 {plan.cta}
                 {!plan.ctaDisabled && <span className="cta-arrow">→</span>}

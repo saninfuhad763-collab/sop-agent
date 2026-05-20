@@ -4,10 +4,13 @@ import Login from "./Login";
 import Register from "./Register";
 import Home from "./Home";
 import Pricing from "./Pricing";
+import Payment from "./Payment";
 
 export default function Root() {
   const token = localStorage.getItem("token");
   const [page, setPage] = useState(token ? "dashboard" : "home");
+  const [selectedPlan, setSelectedPlan] = useState(null);
+  const [selectedBilling, setSelectedBilling] = useState('monthly');
 
   if (page === "home") {
     return (
@@ -41,7 +44,28 @@ export default function Root() {
   }
 
   if (page === "pricing") {
-    return <Pricing goToDashboard={() => setPage("dashboard")} goToHome={() => setPage("home")} />;
+    return (
+      <Pricing
+        goToDashboard={() => setPage("dashboard")}
+        goToHome={() => setPage("home")}
+        onUpgrade={(plan, billing) => {
+          setSelectedPlan(plan);
+          setSelectedBilling(billing);
+          setPage("payment");
+        }}
+      />
+    );
+  }
+
+  if (page === "payment") {
+    return (
+      <Payment
+        plan={selectedPlan}
+        billing={selectedBilling}
+        goToPricing={() => setPage("pricing")}
+        goToDashboard={() => setPage("dashboard")}
+      />
+    );
   }
 
   return <App goToHome={() => setPage("home")} goToPricing={() => setPage("pricing")} />;
