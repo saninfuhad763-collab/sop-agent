@@ -45,8 +45,10 @@ const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
 let docsCollection;
 let chunksCollection;
 let usersCollection;
+let queryLogsCollection;
 const memoryStore = { documents: [], chunks: [] };
 const memoryUsers = [];
+const memoryQueryLogs = [];
 
 const upload = multer({
   dest: "uploads/",
@@ -89,6 +91,7 @@ async function connectMongo() {
     docsCollection = db.collection(DOC_COLLECTION);
     chunksCollection = db.collection(CHUNK_COLLECTION);
     usersCollection = db.collection("users");
+    queryLogsCollection = db.collection("query_logs");
     paymentsCollection = db.collection("payments");
     contactCollection = db.collection("contacts");
     console.log(`Mongo connected: ${MONGO_DB_NAME}`);
@@ -96,6 +99,7 @@ async function connectMongo() {
     docsCollection = null;
     chunksCollection = null;
     contactCollection = null;
+    queryLogsCollection = null;
     console.warn(`Mongo connection failed (${error.code || error.name}). Using in-memory store.`);
   }
 }
@@ -105,26 +109,28 @@ async function createLangChainChunks(text) {
   return splitter.splitText(text);
 }
 
-async function saveDocumentWithChunks(fileName, pages, chunks) {
+async function saveDocumentWithChunks(fileName, pages, chunks, userEmail) {
   if (!docsCollection || !chunksCollection) {
     const id = `mem-${Date.now()}`;
-    memoryStore.documents.push({ id, fileName, pages, uploadedAt: new Date().toISOString() });
-    memoryStore.chunks = chunks;
+    memoryStore.documents.push({ id, fileName, pages, uploadedAt: new Date().toISOString(), userEmail });
+    const chunksWithMetadata = chunks.map(c => ({ ...c, documentId: id, userEmail }));
+    memoryStore.chunks = memoryStore.chunks.concat(chunksWithMetadata);
     return id;
   }
 
-  const doc = await docsCollection.insertOne({ fileName, pages, uploadedAt: new Date() });
+  const doc = await docsCollection.insertOne({ fileName, pages, uploadedAt: new Date(), userEmail });
   const documentId = doc.insertedId;
-  if (chunks.length) await chunksCollection.insertMany(chunks.map(chunk => ({ ...chunk, documentId })));
+  if (chunks.length) await chunksCollection.insertMany(chunks.map(chunk => ({ ...chunk, documentId, userEmail })));
   return documentId.toString();
 }
 
-async function retrieveTopChunks(question) {
+async function retrieveTopChunks(question, userEmail) {
   const queryVector = getEmbedding(question);
   if (chunksCollection) {
     try {
       const dbRows = await chunksCollection.aggregate([
         { $vectorSearch: { index: VECTOR_INDEX, path: "embedding", queryVector, numCandidates: 60, limit: TOP_K_CHUNKS } },
+        { $match: { userEmail } },
         { $project: { _id: 1, fileName: 1, page: 1, chunkIndex: 1, content: 1, score: { $meta: "vectorSearchScore" } } },
       ]).toArray();
       if (dbRows.length) return dbRows;
@@ -134,10 +140,57 @@ async function retrieveTopChunks(question) {
   }
 
   return memoryStore.chunks
+    .filter(chunk => chunk.userEmail === userEmail)
     .map(chunk => ({ ...chunk, score: cosineSimilarity(queryVector, chunk.embedding) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, TOP_K_CHUNKS);
 }
+
+// Middleware to authenticate JWT
+const authenticateJWT = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  let token = req.query.token;
+
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    token = authHeader.split(" ")[1];
+  }
+
+  if (!token) {
+    return res.status(401).json({ error: "Access denied. No token provided." });
+  }
+
+  try {
+    const verified = jwt.verify(token, JWT_SECRET);
+    req.user = verified; // req.user.email
+    next();
+  } catch (err) {
+    res.status(400).json({ error: "Invalid token" });
+  }
+};
+
+app.get("/auth/me", authenticateJWT, async (req, res) => {
+  try {
+    let user;
+    const email = req.user.email.trim().toLowerCase();
+    if (usersCollection) {
+      user = await usersCollection.findOne({ email });
+    } else {
+      user = memoryUsers.find((u) => u.email === email);
+    }
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json({
+      name: user.name,
+      email: user.email,
+      plan: user.plan || "free"
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch user profile" });
+  }
+});
 
 app.post("/auth/register", async (req, res) => {
   try {
@@ -171,6 +224,7 @@ app.post("/auth/register", async (req, res) => {
       name,
       email,
       password: hashedPassword,
+      plan: "free",
     };
 
     if (usersCollection) {
@@ -187,7 +241,8 @@ app.post("/auth/register", async (req, res) => {
 
     res.json({
       message: "Registered successfully",
-      token
+      token,
+      plan: "free"
     });
 
   } catch (error) {
@@ -196,6 +251,7 @@ app.post("/auth/register", async (req, res) => {
     });
   }
 });
+
 app.post("/auth/login", async (req, res) => {
   try {
     let { email, password } = req.body;
@@ -233,7 +289,7 @@ app.post("/auth/login", async (req, res) => {
       { expiresIn: "1d" }
     );
 
-    res.json({ token });
+    res.json({ token, plan: user.plan || "free" });
 
   } catch (error) {
     res.status(500).json({
@@ -270,27 +326,30 @@ app.post("/api/contact", async (req, res) => {
   }
 });
 
-app.get("/admin/documents", async (req, res) => {
+app.get("/admin/documents", authenticateJWT, async (req, res) => {
+  const userEmail = req.user.email.trim().toLowerCase();
   if (docsCollection) {
-    const rows = await docsCollection.find({}).sort({ uploadedAt: -1 }).toArray();
+    const rows = await docsCollection.find({ userEmail }).sort({ uploadedAt: -1 }).toArray();
     return res.json(rows.map(r => ({ id: r._id.toString(), fileName: r.fileName, pages: r.pages, uploadedAt: r.uploadedAt })));
   }
-  return res.json(memoryStore.documents);
+  const filtered = memoryStore.documents.filter(d => d.userEmail === userEmail);
+  return res.json(filtered);
 });
 
-app.delete("/admin/documents/:id", async (req, res) => {
+app.delete("/admin/documents/:id", authenticateJWT, async (req, res) => {
+  const userEmail = req.user.email.trim().toLowerCase();
   if (docsCollection && chunksCollection) {
     const oid = new ObjectId(req.params.id);
-    await docsCollection.deleteOne({ _id: oid });
-    await chunksCollection.deleteMany({ documentId: oid });
+    await docsCollection.deleteOne({ _id: oid, userEmail });
+    await chunksCollection.deleteMany({ documentId: oid, userEmail });
   } else {
-    memoryStore.documents = memoryStore.documents.filter(d => d.id !== req.params.id);
-    memoryStore.chunks = [];
+    memoryStore.documents = memoryStore.documents.filter(d => !(d.id === req.params.id && d.userEmail === userEmail));
+    memoryStore.chunks = memoryStore.chunks.filter(c => !(c.documentId === req.params.id && c.userEmail === userEmail));
   }
   res.json({ message: "Document deleted." });
 });
 
-app.post("/admin/upload", (req, res, next) => {
+app.post("/admin/upload", authenticateJWT, (req, res, next) => {
   upload.single("file")(req, res, (err) => {
     if (err) return res.status(400).json({ error: err.message || "Upload failed" });
     return next();
@@ -298,6 +357,30 @@ app.post("/admin/upload", (req, res, next) => {
 }, async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "No PDF uploaded." });
+    const userEmail = req.user.email.trim().toLowerCase();
+
+    // Check user plan limits
+    let user;
+    if (usersCollection) {
+      user = await usersCollection.findOne({ email: userEmail });
+    } else {
+      user = memoryUsers.find(u => u.email === userEmail);
+    }
+    const plan = user?.plan || "free";
+
+    if (plan === "free") {
+      let currentCount = 0;
+      if (docsCollection) {
+        currentCount = await docsCollection.countDocuments({ userEmail });
+      } else {
+        currentCount = memoryStore.documents.filter(d => d.userEmail === userEmail).length;
+      }
+
+      if (currentCount >= 5) {
+        return res.status(403).json({ error: "SOP Upload limit reached (5 documents max on Free tier). Upgrade to Pro for unlimited uploads!" });
+      }
+    }
+
     const buffer = fs.readFileSync(req.file.path);
     const pdfData = await pdfParse(buffer);
     fs.unlinkSync(req.file.path);
@@ -313,18 +396,71 @@ app.post("/admin/upload", (req, res, next) => {
       chunkIndex: index + 1,
     }));
 
-    const documentId = await saveDocumentWithChunks(req.file.originalname, pages, rows);
+    const documentId = await saveDocumentWithChunks(req.file.originalname, pages, rows, userEmail);
     res.json({ message: "Document indexed", documentId, chunks: rows.length, pages });
   } catch (error) {
     res.status(500).json({ error: "Upload failed", details: error.message });
   }
 });
 
-app.get("/chat/stream", async (req, res) => {
+app.post("/api/payments/cancel", authenticateJWT, async (req, res) => {
+  try {
+    const email = req.user.email.trim().toLowerCase();
+    if (usersCollection) {
+      await usersCollection.updateOne(
+        { email },
+        { $set: { plan: "free", planUpdatedAt: new Date() } }
+      );
+    } else {
+      const user = memoryUsers.find(u => u.email === email);
+      if (user) {
+        user.plan = "free";
+      }
+    }
+    res.json({ success: true, plan: "free" });
+  } catch (err) {
+    console.error("Cancel plan error:", err);
+    res.status(500).json({ error: "Failed to cancel subscription" });
+  }
+});
+
+app.get("/chat/stream", authenticateJWT, async (req, res) => {
+  const userEmail = req.user.email.trim().toLowerCase();
   const question = String(req.query.question || "").trim();
   if (!question) return res.status(400).json({ error: "question query param required" });
 
-  const topChunks = await retrieveTopChunks(question);
+  // Check user plan for daily query limits (Free: 10 queries per day)
+  let user;
+  if (usersCollection) {
+    user = await usersCollection.findOne({ email: userEmail });
+  } else {
+    user = memoryUsers.find(u => u.email === userEmail);
+  }
+  const plan = user?.plan || "free";
+
+  if (plan === "free") {
+    const todayStart = new Date();
+    todayStart.setHours(0,0,0,0);
+
+    let dailyCount = 0;
+    if (queryLogsCollection) {
+      dailyCount = await queryLogsCollection.countDocuments({
+        userEmail,
+        timestamp: { $gte: todayStart }
+      });
+    } else {
+      dailyCount = memoryQueryLogs.filter(log => 
+        log.userEmail === userEmail && 
+        new Date(log.timestamp) >= todayStart
+      ).length;
+    }
+
+    if (dailyCount >= 10) {
+      return res.status(403).json({ error: "Daily query limit reached (10 queries/day max on Free tier). Upgrade to Pro for unlimited queries!" });
+    }
+  }
+
+  const topChunks = await retrieveTopChunks(question, userEmail);
   if (!topChunks.length) return res.status(400).json({ error: "No SOP chunks. Upload documents first." });
 
   const context = topChunks.map((c, i) => `[${i + 1}] ${c.content}`).join("\n\n");
@@ -347,6 +483,14 @@ app.get("/chat/stream", async (req, res) => {
     for await (const part of completion) {
       const token = part?.choices?.[0]?.delta?.content;
       if (token) res.write(`data: ${JSON.stringify({ token })}\n\n`);
+    }
+
+    // Write query log after successful execution
+    const logRecord = { userEmail, timestamp: new Date() };
+    if (queryLogsCollection) {
+      await queryLogsCollection.insertOne(logRecord);
+    } else {
+      memoryQueryLogs.push(logRecord);
     }
 
     const citations = topChunks.map((c, i) => `${i + 1}) ${c.fileName}, Page ${c.page}, Chunk ${c.chunkIndex}`).join("; ");
@@ -437,6 +581,11 @@ app.post("/api/payments/verify", async (req, res) => {
         { email: email.trim().toLowerCase() },
         { $set: { plan: planId || "pro", planUpdatedAt: new Date() } }
       );
+    } else if (email) {
+      const user = memoryUsers.find(u => u.email === email.trim().toLowerCase());
+      if (user) {
+        user.plan = planId || "pro";
+      }
     }
 
     res.json({ success: true, paymentId: razorpay_payment_id, planId: planId || "pro" });
@@ -460,7 +609,7 @@ app.post("/api/payments/webhook", (req, res) => {
         .update(body)
         .digest("hex");
       if (expected !== signature) {
-        return res.status(400).json({ error: "Invalid webhook signature" });
+         return res.status(400).json({ error: "Invalid webhook signature" });
       }
     }
 
@@ -485,6 +634,11 @@ app.post("/api/payments/webhook", (req, res) => {
           { email: notes.email.trim().toLowerCase() },
           { $set: { plan: notes.planId || "pro", planUpdatedAt: new Date() } }
         ).catch(console.error);
+      } else if (notes.email) {
+        const user = memoryUsers.find(u => u.email === notes.email.trim().toLowerCase());
+        if (user) {
+          user.plan = notes.planId || "pro";
+        }
       }
     }
 

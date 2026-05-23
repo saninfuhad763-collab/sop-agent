@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 
-export default function Billing({ goToDashboard, goToPricing }) {
-  const userPlan = localStorage.getItem('userPlan') || 'free';
+export default function Billing({ goToDashboard, goToPricing, userPlan, setUserPlan, token }) {
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [showUpdateCardModal, setShowUpdateCardModal] = useState(false);
   const [billingInfo, setBillingInfo] = useState({
@@ -21,10 +20,26 @@ export default function Billing({ goToDashboard, goToPricing }) {
   // Clean empty invoices if free plan
   const activeHistory = userPlan === 'free' ? [] : history;
 
-  const handleCancelSubscription = () => {
-    localStorage.setItem('userPlan', 'free');
-    setShowCancelModal(false);
-    window.location.reload();
+  const handleCancelSubscription = async () => {
+    try {
+      const res = await fetch('http://localhost:5000/api/payments/cancel', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to cancel subscription');
+        return;
+      }
+      localStorage.setItem('userPlan', 'free');
+      if (setUserPlan) setUserPlan('free');
+      setShowCancelModal(false);
+    } catch (err) {
+      alert('Network error while canceling subscription');
+    }
   };
 
   const handleDownloadInvoice = (inv) => {

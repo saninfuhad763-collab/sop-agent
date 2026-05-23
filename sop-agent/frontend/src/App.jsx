@@ -2,9 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 
 const API = 'http://localhost:5000';
 
-export default function App({ goToHome, goToPricing, goToBilling }) {
+export default function App({ goToHome, goToPricing, goToBilling, userPlan, handleLogout }) {
   const token = localStorage.getItem('token');
-  const userPlan = localStorage.getItem('userPlan');
   const isPro = userPlan === 'pro' || userPlan === 'enterprise';
 
   const [docs, setDocs] = useState([]);
@@ -12,6 +11,8 @@ export default function App({ goToHome, goToPricing, goToBilling }) {
   const [question, setQuestion] = useState('');
   const [messages, setMessages] = useState([]);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [showLimitModal, setShowLimitModal] = useState(false);
+  const [limitModalMessage, setLimitModalMessage] = useState('');
   const fileInputRef = useRef(null);
 
   // useEffect(() => {
@@ -64,6 +65,10 @@ export default function App({ goToHome, goToPricing, goToBilling }) {
 
       if (!res.ok) {
         setStatus(data.error || 'Upload failed');
+        if (res.status === 403) {
+          setLimitModalMessage(data.error || 'SOP Upload limit reached (5 documents max on Free tier). Upgrade to Pro for unlimited uploads!');
+          setShowLimitModal(true);
+        }
         return;
       }
 
@@ -154,11 +159,29 @@ export default function App({ goToHome, goToPricing, goToBilling }) {
         es.close();
       }
     };
+
+    es.onerror = (err) => {
+      setMessages((curr) => {
+        const copy = [...curr];
+        const idx = copy.length - 1;
+        if (!copy[idx].text) {
+          copy[idx].text = "Daily query limit reached (10 queries/day max on Free tier). Upgrade to Pro for unlimited queries!";
+        }
+        return copy;
+      });
+      setLimitModalMessage("Daily query limit reached (10 queries/day max on Free tier). Upgrade to Pro for unlimited queries!");
+      setShowLimitModal(true);
+      es.close();
+    };
   };
 
   const confirmLogout = () => {
-    localStorage.removeItem('token');
-    window.location.reload();
+    if (handleLogout) {
+      handleLogout();
+    } else {
+      localStorage.removeItem('token');
+      window.location.reload();
+    }
   };
 
   return (
@@ -330,6 +353,30 @@ export default function App({ goToHome, goToPricing, goToBilling }) {
               </button>
               <button className="modal-confirm" onClick={confirmLogout}>
                 Yes, sign out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Subscription Limit Modal ── */}
+      {showLimitModal && (
+        <div className="modal-overlay" onClick={() => setShowLimitModal(false)}>
+          <div className="modal-card limit-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-icon" style={{ background: 'rgba(245, 158, 11, 0.1)', color: '#f59e0b' }}>⚡</div>
+            <h3 className="modal-title">Upgrade to Pro!</h3>
+            <p className="modal-desc">
+              {limitModalMessage}
+            </p>
+            <div className="modal-actions">
+              <button className="modal-cancel" onClick={() => setShowLimitModal(false)}>
+                Maybe Later
+              </button>
+              <button className="modal-confirm" style={{ background: 'linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%)', color: '#fff', border: 'none' }} onClick={() => {
+                setShowLimitModal(false);
+                goToPricing();
+              }}>
+                Upgrade to Pro
               </button>
             </div>
           </div>

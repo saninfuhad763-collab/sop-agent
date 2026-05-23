@@ -70,18 +70,18 @@ const perks = [
   { icon: '🌍', title: '99.9% Uptime SLA', desc: 'Reliable infrastructure backed by a strong SLA guarantee.' },
 ];
 
-export default function Pricing({ goToDashboard, goToHome, onUpgrade }) {
+export default function Pricing({ goToDashboard, goToHome, onUpgrade, userPlan, setUserPlan }) {
   const [billing, setBilling] = useState('monthly');
   const [hoveredPlan, setHoveredPlan] = useState(null);
   const [downgradePlan, setDowngradePlan] = useState(null);
 
-  const userPlan = localStorage.getItem('userPlan') || 'free';
-  const isPro = userPlan === 'pro' || userPlan === 'enterprise';
+  const activePlan = userPlan || localStorage.getItem('userPlan') || 'free';
+  const isPro = activePlan === 'pro' || activePlan === 'enterprise';
 
   const dynamicPlans = plans.map(p => {
-    if (p.id === userPlan) {
+    if (p.id === activePlan) {
       return { ...p, cta: 'Current Plan', ctaDisabled: true };
-    } else if (p.id === 'free' && userPlan !== 'free') {
+    } else if (p.id === 'free' && activePlan !== 'free') {
       return { ...p, cta: 'Downgrade', ctaDisabled: false };
     }
     return p;
@@ -230,10 +230,27 @@ export default function Pricing({ goToDashboard, goToHome, onUpgrade }) {
               <button className="modal-cancel" onClick={() => setDowngradePlan(null)}>
                 Cancel
               </button>
-              <button className="modal-confirm" style={{ background: '#ef4444' }} onClick={() => {
-                localStorage.setItem('userPlan', downgradePlan.id);
-                setDowngradePlan(null);
-                window.location.reload(); // Refresh to reflect changes globally
+              <button className="modal-confirm" style={{ background: '#ef4444' }} onClick={async () => {
+                try {
+                  const token = localStorage.getItem('token');
+                  const res = await fetch('http://localhost:5000/api/payments/cancel', {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      Authorization: `Bearer ${token}`
+                    }
+                  });
+                  const data = await res.json();
+                  if (!res.ok) {
+                    alert(data.error || 'Failed to cancel subscription');
+                    return;
+                  }
+                  localStorage.setItem('userPlan', downgradePlan.id);
+                  if (setUserPlan) setUserPlan(downgradePlan.id);
+                  setDowngradePlan(null);
+                } catch (err) {
+                  alert('Network error while downgrading');
+                }
               }}>
                 Yes, Downgrade
               </button>

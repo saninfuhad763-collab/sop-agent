@@ -2,7 +2,7 @@ import { useState } from "react";
 
 const API = "http://localhost:5000";
 
-export default function Login({ goToRegister, goToHome, goToDashboard }) {
+export default function Login({ goToRegister, goToHome, onAuthSuccess }) {
   const [form, setForm] = useState({
     email: "",
     password: "",
@@ -31,11 +31,10 @@ export default function Login({ goToRegister, goToHome, goToDashboard }) {
         return;
       }
 
-      localStorage.setItem("token", data.token);
-
-      if (goToDashboard) {
-        goToDashboard();
+      if (onAuthSuccess) {
+        onAuthSuccess(data.token, data.plan, form.email);
       } else {
+        localStorage.setItem("token", data.token);
         window.location.reload();
       }
     } catch (err) {
