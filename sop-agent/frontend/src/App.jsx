@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 
 const API = 'http://localhost:5000';
 
-export default function App({ goToHome, goToPricing }) {
+export default function App({ goToHome, goToPricing, goToBilling }) {
   const token = localStorage.getItem('token');
+  const userPlan = localStorage.getItem('userPlan');
+  const isPro = userPlan === 'pro' || userPlan === 'enterprise';
 
   const [docs, setDocs] = useState([]);
   const [status, setStatus] = useState('Ready');
@@ -164,7 +166,10 @@ export default function App({ goToHome, goToPricing }) {
       <div className="hero-shell">
 
         <header className="top-nav">
-          <div className="brand" onClick={goToHome} style={{ cursor: 'pointer' }}>OpsMind AI</div>
+          <div className="brand" onClick={goToHome} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+            OpsMind AI
+            {isPro && <span className="pro-badge">PRO</span>}
+          </div>
 
 
 
@@ -177,10 +182,17 @@ export default function App({ goToHome, goToPricing }) {
             </button>
 
             <button
+              className="ghost-btn"
+              onClick={goToBilling}
+            >
+              Billing
+            </button>
+
+            <button
               className="upgrade-btn"
               onClick={goToPricing}
             >
-              ⚡ Upgrade to Pro
+              ⚡ Upgrade Now
             </button>
 
             <button className="primary-btn" onClick={() => setShowLogoutModal(true)}>

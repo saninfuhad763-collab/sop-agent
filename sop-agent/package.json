@@ -22,7 +22,9 @@
     "jsonwebtoken": "^9.0.3",
     "mongodb": "^7.2.0",
     "multer": "^2.1.1",
-    "pdf-parse": "^1.1.4"
+    "nodemailer": "^8.0.7",
+    "pdf-parse": "^1.1.4",
+    "razorpay": "^2.9.6"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

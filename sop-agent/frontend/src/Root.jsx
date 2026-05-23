@@ -1,16 +1,28 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import App from "./App";
 import Login from "./Login";
 import Register from "./Register";
 import Home from "./Home";
 import Pricing from "./Pricing";
 import Payment from "./Payment";
+import Billing from "./Billing";
+
+function getInitialPage(token) {
+  const saved = sessionStorage.getItem("currentPage");
+  if (saved && token) return saved;
+  return token ? "dashboard" : "home";
+}
 
 export default function Root() {
   const token = localStorage.getItem("token");
-  const [page, setPage] = useState(token ? "dashboard" : "home");
+  const [page, setPageRaw] = useState(() => getInitialPage(token));
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [selectedBilling, setSelectedBilling] = useState('monthly');
+
+  const setPage = useCallback((p) => {
+    sessionStorage.setItem("currentPage", p);
+    setPageRaw(p);
+  }, []);
 
   if (page === "home") {
     return (
@@ -68,5 +80,14 @@ export default function Root() {
     );
   }
 
-  return <App goToHome={() => setPage("home")} goToPricing={() => setPage("pricing")} />;
+  if (page === "billing") {
+    return (
+      <Billing
+        goToDashboard={() => setPage("dashboard")}
+        goToPricing={() => setPage("pricing")}
+      />
+    );
+  }
+
+  return <App goToHome={() => setPage("home")} goToPricing={() => setPage("pricing")} goToBilling={() => setPage("billing")} />;
 }

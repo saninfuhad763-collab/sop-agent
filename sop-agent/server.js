@@ -12,14 +12,22 @@ const path = require("path");
 const { MongoClient, ObjectId } = require("mongodb");
 const { RecursiveCharacterTextSplitter } = require("@langchain/textsplitters");
 const Groq = require("groq-sdk");
+const Razorpay = require("razorpay");
 require("dotenv").config();
 
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
 const app = express();
-app.use(cors());
+
+// Raw body needed for Razorpay webhook signature validation
+app.use("/api/payments/webhook", express.raw({ type: "application/json" }));
+app.use(cors({
+  origin: (origin, cb) => cb(null, true), // allow all origins in dev
+  credentials: true,
+}));
 app.use(express.json());
+
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const PORT = Number(process.env.PORT || 5000);
@@ -81,10 +89,13 @@ async function connectMongo() {
     docsCollection = db.collection(DOC_COLLECTION);
     chunksCollection = db.collection(CHUNK_COLLECTION);
     usersCollection = db.collection("users");
+    paymentsCollection = db.collection("payments");
+    contactCollection = db.collection("contacts");
     console.log(`Mongo connected: ${MONGO_DB_NAME}`);
   } catch (error) {
     docsCollection = null;
     chunksCollection = null;
+    contactCollection = null;
     console.warn(`Mongo connection failed (${error.code || error.name}). Using in-memory store.`);
   }
 }
@@ -231,6 +242,34 @@ app.post("/auth/login", async (req, res) => {
   }
 });
 
+app.post("/api/contact", async (req, res) => {
+  try {
+    const { name, email, message } = req.body;
+    if (!name || !email || !message) {
+      return res.status(400).json({ error: "All fields are required" });
+    }
+    
+    const contactDoc = {
+      name,
+      email,
+      message,
+      submittedAt: new Date().toISOString()
+    };
+    
+    // Save to DB
+    if (contactCollection) {
+      await contactCollection.insertOne(contactDoc);
+    } else {
+      console.log("Contact form submitted (no DB):", contactDoc);
+    }
+    
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Contact form error:", err);
+    res.status(500).json({ error: "Failed to submit contact form" });
+  }
+});
+
 app.get("/admin/documents", async (req, res) => {
   if (docsCollection) {
     const rows = await docsCollection.find({}).sort({ uploadedAt: -1 }).toArray();
@@ -321,8 +360,147 @@ app.get("/chat/stream", async (req, res) => {
 
 app.use(express.static(path.join(__dirname, "frontend", "dist")));
 
+// ── Razorpay Setup ─────────────────────────────────────────────────────────
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
+});
+let paymentsCollection;
+let contactCollection;
+
+// Debug: confirm which keys are loaded
+console.log("Razorpay Key ID loaded:", process.env.RAZORPAY_KEY_ID);
+console.log("Razorpay Secret length:", (process.env.RAZORPAY_KEY_SECRET || "").length);
+
+// ── POST /api/payments/create-order ───────────────────────────────────────
+// Creates a Razorpay order and returns the order_id to the frontend
+app.post("/api/payments/create-order", async (req, res) => {
+  try {
+    const { planId, planName, billing, amount, currency = "INR", email } = req.body;
+    if (!amount || !email) return res.status(400).json({ error: "amount and email are required" });
+
+    const options = {
+      amount: Math.round(Number(amount) * 100), // Razorpay expects paise (1 INR = 100 paise)
+      currency,
+      receipt: `rcpt_${Date.now()}`,
+      notes: { planId, planName, billing, email },
+    };
+
+    const order = await razorpay.orders.create(options);
+    res.json({ orderId: order.id, amount: order.amount, currency: order.currency, key: process.env.RAZORPAY_KEY_ID });
+  } catch (err) {
+    const razorErr = err?.error || err;
+    const message = razorErr?.description || razorErr?.message || 'Failed to create payment order';
+    console.error("Razorpay create-order error:", JSON.stringify(razorErr, null, 2));
+    res.status(500).json({ error: message, code: razorErr?.code });
+  }
+});
+
+// ── POST /api/payments/verify ─────────────────────────────────────────────
+// Verifies Razorpay signature, upgrades user plan, and stores payment record
+app.post("/api/payments/verify", async (req, res) => {
+  try {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, planId, email } = req.body;
+
+    // Validate all required fields
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      return res.status(400).json({ error: "Missing payment verification fields" });
+    }
+
+    // Verify HMAC-SHA256 signature
+    const expectedSig = crypto
+      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest("hex");
+
+    if (expectedSig !== razorpay_signature) {
+      return res.status(400).json({ error: "Payment signature mismatch — possible tampering" });
+    }
+
+    // Record payment in MongoDB
+    const record = {
+      orderId: razorpay_order_id,
+      paymentId: razorpay_payment_id,
+      planId: planId || "pro",
+      email,
+      status: "paid",
+      paidAt: new Date(),
+    };
+
+    if (paymentsCollection) {
+      await paymentsCollection.insertOne(record);
+    }
+
+    // Upgrade user plan in users collection
+    if (usersCollection && email) {
+      await usersCollection.updateOne(
+        { email: email.trim().toLowerCase() },
+        { $set: { plan: planId || "pro", planUpdatedAt: new Date() } }
+      );
+    }
+
+    res.json({ success: true, paymentId: razorpay_payment_id, planId: planId || "pro" });
+  } catch (err) {
+    console.error("Razorpay verify error:", err);
+    res.status(500).json({ error: "Payment verification failed" });
+  }
+});
+
+// ── POST /api/payments/webhook ────────────────────────────────────────────
+// Handles async Razorpay webhook events (reliable fallback for browser-close scenarios)
+app.post("/api/payments/webhook", (req, res) => {
+  try {
+    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || "";
+    const signature = req.headers["x-razorpay-signature"];
+    const body = req.body; // raw buffer
+
+    if (webhookSecret) {
+      const expected = crypto
+        .createHmac("sha256", webhookSecret)
+        .update(body)
+        .digest("hex");
+      if (expected !== signature) {
+        return res.status(400).json({ error: "Invalid webhook signature" });
+      }
+    }
+
+    const event = JSON.parse(body.toString());
+    const { event: eventName, payload } = event;
+
+    if (eventName === "payment.captured") {
+      const payment = payload.payment.entity;
+      const notes = payment.notes || {};
+      const record = {
+        orderId: payment.order_id,
+        paymentId: payment.id,
+        planId: notes.planId || "pro",
+        email: notes.email || "",
+        status: "paid",
+        paidAt: new Date(),
+        source: "webhook",
+      };
+      if (paymentsCollection) paymentsCollection.insertOne(record).catch(console.error);
+      if (usersCollection && notes.email) {
+        usersCollection.updateOne(
+          { email: notes.email.trim().toLowerCase() },
+          { $set: { plan: notes.planId || "pro", planUpdatedAt: new Date() } }
+        ).catch(console.error);
+      }
+    }
+
+    res.json({ received: true });
+  } catch (err) {
+    console.error("Webhook error:", err);
+    res.status(500).json({ error: "Webhook processing failed" });
+  }
+});
+
 connectMongo().finally(() => {
+  // Attach paymentsCollection after Mongo connects
+  if (typeof paymentsCollection === "undefined") {
+    // Will be set inside connectMongo extension below — this is a no-op guard
+  }
   console.log(process.env.GROQ_API_KEY);
   console.log(process.env.GROQ_MODEL);
   app.listen(PORT, () => console.log(`OpsMind API on :${PORT}`));
-});
+});

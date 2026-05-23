@@ -2,27 +2,42 @@ import React, { useState } from 'react';
 
 export default function Home({ goToLogin, goToRegister, goToDashboard, hasToken }) {
   const [formData, setFormData] = useState({ name: '', email: '', message: '' });
+  const userPlan = localStorage.getItem('userPlan');
+  const isPro = userPlan === 'pro' || userPlan === 'enterprise';
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.name || !formData.email || !formData.message) return;
     setSubmitting(true);
-    setTimeout(() => {
+    
+    try {
+      const res = await fetch('/api/contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData)
+      });
+      
+      if (res.ok) {
+        setSubmitted(true);
+        setFormData({ name: '', email: '', message: '' });
+        setTimeout(() => setSubmitted(false), 5000);
+      }
+    } catch (err) {
+      console.error("Contact submission failed", err);
+    } finally {
       setSubmitting(false);
-      setSubmitted(true);
-      setFormData({ name: '', email: '', message: '' });
-      setTimeout(() => setSubmitted(false), 5000);
-    }, 1200);
+    }
   };
 
   return (
     <div className="hw-page">
       {/* ── Navigation (Sticky outside of shell) ── */}
       <header className="hw-nav">
-        <div className="brand" onClick={goToDashboard} style={{ cursor: 'pointer' }}>
+        <div className="brand" onClick={goToDashboard} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
           OpsMind AI
+          {isPro && <span className="pro-badge">PRO</span>}
         </div>
         <nav className="hw-nav-links">
           <a href="#" onClick={(e) => { e.preventDefault(); goToDashboard(); }}>Dashboard</a>

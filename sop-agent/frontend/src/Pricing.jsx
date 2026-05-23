@@ -37,7 +37,7 @@ const plans = [
       { text: 'Advanced analytics', included: false },
       { text: 'Custom integrations', included: false },
     ],
-    cta: 'Upgrade to Pro',
+    cta: 'Upgrade Now',
     ctaDisabled: false,
     highlight: true,
   },
@@ -73,12 +73,28 @@ const perks = [
 export default function Pricing({ goToDashboard, goToHome, onUpgrade }) {
   const [billing, setBilling] = useState('monthly');
   const [hoveredPlan, setHoveredPlan] = useState(null);
+  const [downgradePlan, setDowngradePlan] = useState(null);
+
+  const userPlan = localStorage.getItem('userPlan') || 'free';
+  const isPro = userPlan === 'pro' || userPlan === 'enterprise';
+
+  const dynamicPlans = plans.map(p => {
+    if (p.id === userPlan) {
+      return { ...p, cta: 'Current Plan', ctaDisabled: true };
+    } else if (p.id === 'free' && userPlan !== 'free') {
+      return { ...p, cta: 'Downgrade', ctaDisabled: false };
+    }
+    return p;
+  });
 
   return (
     <div className="pricing-page">
       {/* ── Nav ── */}
       <header className="pricing-nav">
-        <div className="brand" onClick={goToHome} style={{ cursor: 'pointer' }}>OpsMind AI</div>
+        <div className="brand" onClick={goToHome} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+          OpsMind AI
+          {isPro && <span className="pro-badge">PRO</span>}
+        </div>
         <div className="nav-actions">
           <button className="ghost-btn" onClick={goToDashboard}>← Dashboard</button>
         </div>
@@ -116,7 +132,7 @@ export default function Pricing({ goToDashboard, goToHome, onUpgrade }) {
 
         {/* ── Plan Cards ── */}
         <div className="pricing-grid">
-          {plans.map((plan, i) => (
+          {dynamicPlans.map((plan, i) => (
             <div
               key={plan.id}
               className={`plan-card ${plan.highlight ? 'plan-card--highlight' : ''} ${hoveredPlan === plan.id ? 'plan-card--hovered' : ''}`}
@@ -154,7 +170,14 @@ export default function Pricing({ goToDashboard, goToHome, onUpgrade }) {
               <button
                 className={`plan-cta ${plan.highlight ? 'plan-cta--primary' : 'plan-cta--ghost'} ${plan.ctaDisabled ? 'plan-cta--disabled' : ''}`}
                 disabled={plan.ctaDisabled}
-                onClick={() => !plan.ctaDisabled && onUpgrade && onUpgrade(plan, billing)}
+                onClick={() => {
+                  if (plan.ctaDisabled) return;
+                  if (plan.cta === 'Downgrade') {
+                    setDowngradePlan(plan);
+                  } else if (onUpgrade) {
+                    onUpgrade(plan, billing);
+                  }
+                }}
               >
                 {plan.cta}
                 {!plan.ctaDisabled && <span className="cta-arrow">→</span>}
@@ -192,6 +215,32 @@ export default function Pricing({ goToDashboard, goToHome, onUpgrade }) {
           <button className="ghost-btn cta-strip-btn">Talk to Sales</button>
         </div>
       </div>
+
+      {/* ── Downgrade Confirmation Modal ── */}
+      {downgradePlan && (
+        <div className="modal-overlay" onClick={() => setDowngradePlan(null)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-icon" style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444' }}>⚠️</div>
+            <h3 className="modal-title">Confirm Downgrade</h3>
+            <p className="modal-desc">
+              Are you sure you want to downgrade to the <strong>{downgradePlan.name}</strong> plan? 
+              You will lose access to premium features and your limits will be reduced immediately.
+            </p>
+            <div className="modal-actions">
+              <button className="modal-cancel" onClick={() => setDowngradePlan(null)}>
+                Cancel
+              </button>
+              <button className="modal-confirm" style={{ background: '#ef4444' }} onClick={() => {
+                localStorage.setItem('userPlan', downgradePlan.id);
+                setDowngradePlan(null);
+                window.location.reload(); // Refresh to reflect changes globally
+              }}>
+                Yes, Downgrade
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
