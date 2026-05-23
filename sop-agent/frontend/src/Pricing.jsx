@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { motion } from 'framer-motion';
 
 const plans = [
   {
@@ -57,7 +58,7 @@ const plans = [
       { text: 'Advanced analytics', included: true },
       { text: 'Custom integrations', included: true },
     ],
-    cta: 'Contact Sales',
+    cta: 'Upgrade Now',
     ctaDisabled: false,
     highlight: false,
   },
@@ -74,6 +75,12 @@ export default function Pricing({ goToDashboard, goToHome, onUpgrade, userPlan, 
   const [billing, setBilling] = useState('monthly');
   const [hoveredPlan, setHoveredPlan] = useState(null);
   const [downgradePlan, setDowngradePlan] = useState(null);
+  
+  const [showContactModal, setShowContactModal] = useState(false);
+  const [contactName, setContactName] = useState('');
+  const [contactEmail, setContactEmail] = useState('');
+  const [contactMessage, setContactMessage] = useState('');
+  const [contactStatus, setContactStatus] = useState('');
 
   const activePlan = userPlan || localStorage.getItem('userPlan') || 'free';
   const isPro = activePlan === 'pro' || activePlan === 'enterprise';
@@ -81,7 +88,11 @@ export default function Pricing({ goToDashboard, goToHome, onUpgrade, userPlan, 
   const dynamicPlans = plans.map(p => {
     if (p.id === activePlan) {
       return { ...p, cta: 'Current Plan', ctaDisabled: true };
-    } else if (p.id === 'free' && activePlan !== 'free') {
+    } else if (activePlan === 'enterprise' && p.id === 'pro') {
+      return { ...p, cta: 'Downgrade', ctaDisabled: false };
+    } else if (activePlan === 'enterprise' && p.id === 'free') {
+      return { ...p, cta: 'Downgrade', ctaDisabled: false };
+    } else if (activePlan === 'pro' && p.id === 'free') {
       return { ...p, cta: 'Downgrade', ctaDisabled: false };
     }
     return p;
@@ -212,7 +223,16 @@ export default function Pricing({ goToDashboard, goToHome, onUpgrade, userPlan, 
         {/* ── FAQ teaser ── */}
         <div className="pricing-cta-strip">
           <p className="cta-strip-text">Still have questions? We're here to help.</p>
-          <button className="ghost-btn cta-strip-btn">Talk to Sales</button>
+          <button 
+            className="ghost-btn cta-strip-btn"
+            onClick={() => {
+              setContactMessage('');
+              setContactStatus('');
+              setShowContactModal(true);
+            }}
+          >
+            Talk to Sales
+          </button>
         </div>
       </div>
 
@@ -256,6 +276,115 @@ export default function Pricing({ goToDashboard, goToHome, onUpgrade, userPlan, 
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Contact Sales Modal ── */}
+      {showContactModal && (
+        <div className="modal-overlay" onClick={() => setShowContactModal(false)}>
+          <motion.div 
+            className="modal-card" 
+            onClick={(e) => e.stopPropagation()} 
+            style={{ maxWidth: '480px' }}
+            initial={{ opacity: 0, scale: 0.94, y: 15 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            transition={{ duration: 0.35, ease: "easeOut" }}
+          >
+            <div className="modal-icon" style={{ background: 'rgba(59, 130, 246, 0.1)', color: '#3b82f6' }}>📧</div>
+            <h3 className="modal-title">Talk to Sales</h3>
+            <p className="modal-desc" style={{ color: '#94a3b8', fontSize: '0.9rem', marginBottom: '16px' }}>
+              Discuss custom Enterprise features, team accounts, or dedicated compliance needs with our solutions engineers.
+            </p>
+            
+            {contactStatus === 'success' ? (
+              <div className="contact-success-state" style={{ textAlign: 'center', padding: '20px 0' }}>
+                <span style={{ fontSize: '3rem' }}>🎉</span>
+                <h4 style={{ color: '#10b981', margin: '10px 0', fontSize: '1.2rem' }}>Message Sent!</h4>
+                <p style={{ color: '#94a3b8', fontSize: '0.9rem' }}>Thank you. Our sales desk will reach out to you within 24 hours.</p>
+                <button 
+                  className="modal-cancel" 
+                  onClick={() => setShowContactModal(false)}
+                  style={{ marginTop: '20px', width: '100%', background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid rgba(255,255,255,0.1)' }}
+                >
+                  Close Window
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                setContactStatus('sending');
+                try {
+                  const token = localStorage.getItem('token');
+                  const res = await fetch('http://localhost:5000/api/contact', {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      Authorization: `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                      name: contactName,
+                      email: contactEmail,
+                      message: contactMessage
+                    })
+                  });
+                  const data = await res.json();
+                  if (res.ok) {
+                    setContactStatus('success');
+                    setContactName('');
+                    setContactEmail('');
+                    setContactMessage('');
+                  } else {
+                    setContactStatus('error');
+                    alert(data.error || 'Failed to submit form');
+                  }
+                } catch (err) {
+                  setContactStatus('error');
+                  alert('Network error while sending message');
+                }
+              }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', textAlign: 'left', marginBottom: '20px' }}>
+                  <label style={{ fontSize: '0.8rem', color: '#94a3b8', fontWeight: '500' }}>Full Name</label>
+                  <input 
+                    type="text" 
+                    required 
+                    placeholder="John Doe" 
+                    value={contactName} 
+                    onChange={e => setContactName(e.target.value)} 
+                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px', padding: '10px 12px', color: '#fff', outline: 'none', transition: 'border-color 0.2s' }}
+                  />
+                  
+                  <label style={{ fontSize: '0.8rem', color: '#94a3b8', fontWeight: '500' }}>Work Email</label>
+                  <input 
+                    type="email" 
+                    required 
+                    placeholder="john@company.com" 
+                    value={contactEmail} 
+                    onChange={e => setContactEmail(e.target.value)} 
+                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px', padding: '10px 12px', color: '#fff', outline: 'none', transition: 'border-color 0.2s' }}
+                  />
+                  
+                  <label style={{ fontSize: '0.8rem', color: '#94a3b8', fontWeight: '500' }}>Message</label>
+                  <textarea 
+                    required 
+                    rows={4}
+                    placeholder="Tell us about your team size, custom compliance needs..." 
+                    value={contactMessage} 
+                    onChange={e => setContactMessage(e.target.value)} 
+                    style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px', padding: '10px 12px', color: '#fff', outline: 'none', resize: 'vertical', minHeight: '80px', transition: 'border-color 0.2s' }}
+                  />
+                </div>
+                
+                <div className="modal-actions" style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                  <button type="button" className="modal-cancel" onClick={() => setShowContactModal(false)} disabled={contactStatus === 'sending'} style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', borderRadius: '8px', padding: '10px 18px', cursor: 'pointer' }}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="modal-confirm" disabled={contactStatus === 'sending'} style={{ background: '#3b82f6', border: 'none', color: '#fff', borderRadius: '8px', padding: '10px 22px', cursor: 'pointer', fontWeight: '600' }}>
+                    {contactStatus === 'sending' ? 'Sending...' : 'Send Inquiry'}
+                  </button>
+                </div>
+              </form>
+            )}
+          </motion.div>
         </div>
       )}
     </div>

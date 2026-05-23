@@ -25,6 +25,7 @@ export default function Root() {
   const setPage = useCallback((p) => {
     sessionStorage.setItem("currentPage", p);
     setPageRaw(p);
+    window.scrollTo(0, 0);
   }, []);
 
   const handleAuthSuccess = (newToken, newPlan, newEmail) => {
