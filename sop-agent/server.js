@@ -1062,9 +1062,6 @@ const razorpay = new Razorpay({
 let paymentsCollection;
 let contactCollection;
 
-// Debug: confirm which keys are loaded
-console.log("Razorpay Key ID loaded:", process.env.RAZORPAY_KEY_ID);
-console.log("Razorpay Secret length:", (process.env.RAZORPAY_KEY_SECRET || "").length);
 
 // ── POST /api/payments/create-order ───────────────────────────────────────
 // Creates a Razorpay order and returns the order_id to the frontend
@@ -1204,7 +1201,5 @@ connectMongo().finally(() => {
   if (typeof paymentsCollection === "undefined") {
     // Will be set inside connectMongo extension below — this is a no-op guard
   }
-  console.log(process.env.GROQ_API_KEY);
-  console.log(process.env.GROQ_MODEL);
   app.listen(PORT, () => console.log(`OpsMind API on :${PORT}`));
 });
