@@ -164,32 +164,33 @@ const STOPWORDS = new Set([
   "yourself", "yourselves"
 ]);
 
-function getKeywordOverlapScore(chunkText, queryText) {
-  const queryTokens = queryText.toLowerCase()
+const SYNONYMS = {
+  "leave": ["vacation", "annual leave", "pto", "holiday", "absence", "off-duty", "sick"],
+  "refund": ["reimburse", "chargeback", "payment", "money back", "return fee", "billing"],
+  "sla": ["service level agreement", "deadline", "response time", "agreement", "resolution time"],
+  "incident": ["outage", "security breach", "hack", "failure", "crash", "bug", "issue"],
+  "checklist": ["steps", "tasks", "process", "guide", "procedure", "walkthrough"],
+  "security": ["mfa", "encryption", "auth", "access key", "credentials", "compliance"],
+  "onboard": ["hiring", "training", "orientation", "induction", "welcome"]
+};
+
+function getTokens(text) {
+  if (typeof text !== 'string') return [];
+  return text.toLowerCase()
     .split(/\W+/)
     .filter(t => (t.length > 2 || /\d+/.test(t)) && !STOPWORDS.has(t));
-  
-  if (queryTokens.length === 0) return 0;
-  
-  const chunkLower = chunkText.toLowerCase();
-  let score = 0;
+}
 
-  for (const token of queryTokens) {
-    // Count occurrences (TF-style) — the more times a keyword appears, the higher the score
-    let count = 0;
-    let pos = chunkLower.indexOf(token);
-    while (pos !== -1) {
-      count++;
-      pos = chunkLower.indexOf(token, pos + 1);
-    }
-    if (count > 0) {
-      // Log-scaled term frequency to avoid domination by single terms
-      score += 1 + Math.log(count);
+function expandQueryTokens(tokens) {
+  const expanded = new Set(tokens);
+  for (const token of tokens) {
+    if (SYNONYMS[token]) {
+      for (const syn of SYNONYMS[token]) {
+        expanded.add(syn);
+      }
     }
   }
-
-  // Normalize by number of query terms
-  return score / queryTokens.length;
+  return Array.from(expanded);
 }
 
 async function retrieveTopChunks(question, userEmail) {
@@ -209,27 +210,81 @@ async function retrieveTopChunks(question, userEmail) {
   }
 
   if (candidateChunks.length) {
+    const N = candidateChunks.length;
+    
+    // 1. Calculate Average Document Length (avgdl)
+    let totalLength = 0;
+    const chunkTokensMap = new Map();
+    
+    for (const chunk of candidateChunks) {
+      const tokens = getTokens(chunk.content);
+      chunkTokensMap.set(chunk, tokens);
+      totalLength += tokens.length;
+    }
+    const avgdl = totalLength / N || 1;
+    
+    // 2. Tokenize and Expand Query
+    const rawQueryTokens = getTokens(question);
+    const expandedQueryTokens = expandQueryTokens(rawQueryTokens);
+    
+    // 3. Compute n(q) for expanded query tokens to get IDF values
+    const idfMap = new Map();
+    for (const q of expandedQueryTokens) {
+      let nq = 0;
+      for (const tokens of chunkTokensMap.values()) {
+        if (tokens.includes(q)) {
+          nq++;
+        }
+      }
+      // Okapi BM25 standard IDF with positive floor
+      const idf = Math.max(0.0001, Math.log(1 + (N - nq + 0.5) / (nq + 0.5)));
+      idfMap.set(q, idf);
+    }
+    
+    // 4. Score Candidate Chunks
+    const k1 = 1.2;
+    const b = 0.75;
+    
     let ranked = candidateChunks
       .map(chunk => {
-        const cosScore = cosineSimilarity(queryVector, chunk.embedding);
-        const overlapScore = getKeywordOverlapScore(chunk.content, question);
-        // Weighted hybrid: keyword overlap is the dominant signal (70%) since our embeddings are hash-based
-        let hybridScore = (cosScore * 0.3) + (overlapScore * 0.7);
+        const tokens = chunkTokensMap.get(chunk) || [];
+        const docLength = tokens.length;
         
-        // Semantic phrase boosters — boost chunks that contain exact query bigrams
+        // Compute BM25 Score
+        let bm25Score = 0;
+        for (const q of expandedQueryTokens) {
+          // Calculate Term Frequency (TF)
+          let tf = 0;
+          for (const token of tokens) {
+            if (token === q) tf++;
+          }
+          
+          if (tf > 0) {
+            const idf = idfMap.get(q) || 0;
+            const termScore = idf * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * (docLength / avgdl)));
+            bm25Score += termScore;
+          }
+        }
+        
+        // Calculate Cosine Similarity over term-hash vectors
+        const cosScore = cosineSimilarity(queryVector, chunk.embedding);
+        
+        // Hybrid Combination: BM25 (dominant search) + Cosine Similarity
+        let hybridScore = (cosScore * 0.4) + (bm25Score * 0.6);
+        
+        // Semantic bigram matching boost
         const chunkLower = chunk.content.toLowerCase();
         const questionLower = question.toLowerCase();
         
-        // Extract important phrases (2-3 word sequences) from the question and boost matches
         const words = questionLower.split(/\W+/).filter(w => w.length > 2 && !STOPWORDS.has(w));
         for (let i = 0; i < words.length - 1; i++) {
           const bigram = words[i] + ' ' + words[i + 1];
           if (chunkLower.includes(bigram)) {
-            hybridScore += 1.5; // bigram match is a strong signal
+            hybridScore += 1.5;
           }
         }
         
-        // Named entity boosters for common SOP topics
+        // Named entity booster for key operational terms
         const boostPairs = [
           ["project 1", "project 1"], ["project 2", "project 2"],
           ["refund", "refund"], ["checklist", "checklist"],
@@ -251,7 +306,6 @@ async function retrieveTopChunks(question, userEmail) {
       .sort((a, b) => b.score - a.score);
 
     // Diversity guarantee: ensure at least one chunk per queried entity
-    const questionLower = question.toLowerCase();
     if (questionLower.includes("project 1") && questionLower.includes("project 2")) {
       const p1Chunks = ranked.filter(c => c.content.toLowerCase().includes("project 1")).slice(0, 3);
       const p2Chunks = ranked.filter(c => c.content.toLowerCase().includes("project 2")).slice(0, 3);
@@ -328,9 +382,22 @@ app.get("/auth/me", authenticateJWT, async (req, res) => {
   }
 });
 
+function escapeHTML(str) {
+  if (typeof str !== 'string') return '';
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#x27;")
+    .replace(/\//g, "&#x2F;");
+}
+
 app.post("/auth/register", async (req, res) => {
   try {
-    let { name, email, password } = req.body;
+    const name = String(req.body.name || "").trim();
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const password = String(req.body.password || "");
 
     if (!email || !password) {
       return res.status(400).json({
@@ -339,8 +406,6 @@ app.post("/auth/register", async (req, res) => {
     }
 
     let existingUser;
-
-    email = email.trim().toLowerCase();
 
     if (usersCollection) {
       existingUser = await usersCollection.findOne({ email });
@@ -390,11 +455,16 @@ app.post("/auth/register", async (req, res) => {
 
 app.post("/auth/login", async (req, res) => {
   try {
-    let { email, password } = req.body;
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const password = String(req.body.password || "");
+
+    if (!email || !password) {
+      return res.status(400).json({
+        error: "Email and password required",
+      });
+    }
 
     let user;
-
-    email = email.trim().toLowerCase();
 
     if (usersCollection) {
       user = await usersCollection.findOne({ email });
@@ -436,15 +506,22 @@ app.post("/auth/login", async (req, res) => {
 
 app.post("/api/contact", async (req, res) => {
   try {
-    const { name, email, message } = req.body;
+    const name = String(req.body.name || "").trim();
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const message = String(req.body.message || "").trim();
+
     if (!name || !email || !message) {
       return res.status(400).json({ error: "All fields are required" });
     }
     
+    const sanitizedName = escapeHTML(name);
+    const sanitizedEmail = escapeHTML(email);
+    const sanitizedMessage = escapeHTML(message);
+
     const contactDoc = {
-      name,
-      email,
-      message,
+      name: sanitizedName,
+      email: sanitizedEmail,
+      message: sanitizedMessage,
       submittedAt: new Date().toISOString()
     };
     
