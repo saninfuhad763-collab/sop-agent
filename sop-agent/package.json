@@ -4,7 +4,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "concurrently \"node server.js\" \"npm --prefix frontend run dev\"",
+    "dev": "concurrently \"node --watch server.js\" \"npm --prefix frontend run dev\"",
     "frontend:dev": "npm --prefix frontend run dev",
     "frontend:build": "npm --prefix frontend run build"
   },

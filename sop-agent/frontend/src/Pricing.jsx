@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 
+const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
+
 const plans = [
   {
     id: 'free',
@@ -253,12 +255,13 @@ export default function Pricing({ goToDashboard, goToHome, onUpgrade, userPlan, 
               <button className="modal-confirm" style={{ background: '#ef4444' }} onClick={async () => {
                 try {
                   const token = localStorage.getItem('token');
-                  const res = await fetch('http://localhost:5000/api/payments/cancel', {
+                  const res = await fetch(`${API}/api/payments/cancel`, {
                     method: 'POST',
                     headers: {
                       'Content-Type': 'application/json',
                       Authorization: `Bearer ${token}`
-                    }
+                    },
+                    body: JSON.stringify({ plan: downgradePlan.id })
                   });
                   const data = await res.json();
                   if (!res.ok) {
@@ -315,7 +318,7 @@ export default function Pricing({ goToDashboard, goToHome, onUpgrade, userPlan, 
                 setContactStatus('sending');
                 try {
                   const token = localStorage.getItem('token');
-                  const res = await fetch('http://localhost:5000/api/contact', {
+                  const res = await fetch(`${API}/api/contact`, {
                     method: 'POST',
                     headers: {
                       'Content-Type': 'application/json',

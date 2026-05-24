@@ -1,22 +1,31 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 
-const API = 'http://localhost:5000';
+const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
 export default function App({ goToHome, goToPricing, goToBilling, userPlan, handleLogout }) {
   const token = localStorage.getItem('token');
   const isPro = userPlan === 'pro' || userPlan === 'enterprise';
+  const isEnterprise = userPlan === 'enterprise';
 
   const [activeTab, setActiveTab] = useState('workspace');
   const [docs, setDocs] = useState([]);
   const [status, setStatus] = useState('Ready');
   const [question, setQuestion] = useState('');
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('chat_messages');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [showLimitModal, setShowLimitModal] = useState(false);
   const [limitModalMessage, setLimitModalMessage] = useState('');
   const fileInputRef = useRef(null);
   const chatEndRef = useRef(null);
+  const isInitialMount = useRef(true); // skip auto-scroll on first render (restored from storage)
 
   // Team tab states
   const [teamMembers, setTeamMembers] = useState([]);
@@ -105,12 +114,28 @@ export default function App({ goToHome, goToPricing, goToBilling, userPlan, hand
   useEffect(() => {
     loadDocs();
     if (isPro) {
-      loadAnalytics();
       loadTeamMembers();
     }
-  }, [isPro]);
+    if (isEnterprise) {
+      loadAnalytics();
+    }
+  }, [isPro, isEnterprise]);
+
+  // Persist chat messages to sessionStorage on every change
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('chat_messages', JSON.stringify(messages));
+    } catch {
+      // storage quota exceeded — silently ignore
+    }
+  }, [messages]);
 
   useEffect(() => {
+    if (isInitialMount.current) {
+      // First render — messages restored from sessionStorage, don't scroll
+      isInitialMount.current = false;
+      return;
+    }
     if (chatEndRef.current && messages.length > 0) {
       chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
@@ -119,10 +144,10 @@ export default function App({ goToHome, goToPricing, goToBilling, userPlan, hand
   useEffect(() => {
     if (activeTab === 'team' && isPro) {
       loadTeamMembers();
-    } else if (activeTab === 'analytics' && isPro) {
+    } else if (activeTab === 'analytics' && isEnterprise) {
       loadAnalytics();
     }
-  }, [activeTab, userPlan]);
+  }, [activeTab, userPlan, isPro, isEnterprise]);
 
   const upload = async (file) => {
     setStatus('Uploading PDF...');
@@ -301,42 +326,49 @@ export default function App({ goToHome, goToPricing, goToBilling, userPlan, hand
     if (!folderLink.trim()) return;
     setSyncStatus('connecting');
 
-    setTimeout(() => {
-      setSyncStatus('scanning');
-      setTimeout(() => {
-        setSyncStatus('downloading');
-        setTimeout(() => {
-          setSyncStatus('indexing');
-          
-          fetch(`${API}/api/integrations/sync`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`
-            },
-            body: JSON.stringify({ folderLink })
-          })
-          .then(res => res.json())
-          .then(data => {
-            if (data.success) {
-              setSyncStatus('success');
-              loadDocs();
-              setTimeout(() => {
-                setSyncStatus('');
-                setFolderLink('');
-              }, 4000);
-            } else {
-              setSyncStatus('error');
-            }
-          })
-          .catch(() => {
-            setSyncStatus('error');
-          });
+    // Fire the real API call immediately so download runs in parallel with UI stages
+    const syncPromise = fetch(`${API}/api/integrations/sync`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({ folderLink })
+    });
 
-        }, 3000);
-      }, 2500);
-    }, 2000);
+    await new Promise(r => setTimeout(r, 800));
+    setSyncStatus('scanning');
+    await new Promise(r => setTimeout(r, 900));
+    setSyncStatus('downloading');
+
+    // Wait for real backend response (PDF download + parse + index)
+    let data;
+    try {
+      const res = await syncPromise;
+      data = await res.json();
+    } catch {
+      setSyncStatus('error');
+      setTimeout(() => setSyncStatus(''), 5000);
+      return;
+    }
+
+    setSyncStatus('indexing');
+    await new Promise(r => setTimeout(r, 600));
+
+    if (data.success) {
+      setSyncStatus('success');
+      loadDocs();
+      setTimeout(() => {
+        setSyncStatus('');
+        setFolderLink('');
+      }, 4000);
+    } else {
+      setSyncStatus('error');
+      console.error('Sync error:', data.error);
+      setTimeout(() => setSyncStatus(''), 5000);
+    }
   };
+
 
   const confirmLogout = () => {
     if (handleLogout) {
@@ -433,7 +465,7 @@ export default function App({ goToHome, goToPricing, goToBilling, userPlan, hand
             className={`tab-btn ${activeTab === 'analytics' ? 'active' : ''}`}
             onClick={() => setActiveTab('analytics')}
           >
-            📊 Search Analytics {!isPro && (
+            📊 Search Analytics {!isEnterprise && (
               <span className="tab-lock-badge">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
                   <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
@@ -446,7 +478,7 @@ export default function App({ goToHome, goToPricing, goToBilling, userPlan, hand
             className={`tab-btn ${activeTab === 'integrations' ? 'active' : ''}`}
             onClick={() => setActiveTab('integrations')}
           >
-            🔌 Integrations {!isPro && (
+            🔌 Integrations {!isEnterprise && (
               <span className="tab-lock-badge">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
                   <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
@@ -668,7 +700,7 @@ export default function App({ goToHome, goToPricing, goToBilling, userPlan, hand
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, ease: "easeOut" }}
           >
-            {!isPro ? (
+            {!isEnterprise ? (
               renderLockedFeature("Advanced Search Analytics", "Access comprehensive RAG pipeline audits. Discover exact operational questions teammates are querying, track real-time knowledge base coverage, and view highlighted compliance gaps where the model reports missing info.")
             ) : (
               <div>
@@ -741,7 +773,7 @@ export default function App({ goToHome, goToPricing, goToBilling, userPlan, hand
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, ease: "easeOut" }}
           >
-            {!isPro ? (
+            {!isEnterprise ? (
               renderLockedFeature("Automated Integrations", "Instantly ingest, chunk, and index SOP documents from Google Drive, Notion, Confluence, or OneDrive folder links directly into your operational AI context.")
             ) : (
               <div className="integrations-wrapper">

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 
-const API = ''; // Vite proxies /api, /auth etc. to http://localhost:5000
+const API = import.meta.env.VITE_API_URL || "";
 
 // Dynamically load Razorpay checkout script
 function loadRazorpayScript() {

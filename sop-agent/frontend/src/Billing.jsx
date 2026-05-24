@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 
+const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
+
 export default function Billing({ goToDashboard, goToPricing, userPlan, setUserPlan, token }) {
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [showUpdateCardModal, setShowUpdateCardModal] = useState(false);
@@ -10,6 +12,10 @@ export default function Billing({ goToDashboard, goToPricing, userPlan, setUserP
     expiry: '12/28',
     email: localStorage.getItem('userEmail') || 'billing@company.com'
   });
+  
+  const [newCardNumber, setNewCardNumber] = useState('');
+  const [newExpiry, setNewExpiry] = useState('');
+  const [newCvv, setNewCvv] = useState('');
   
   const [history, setHistory] = useState([
     { id: 'INV-2026-004', date: '2026-05-15', amount: userPlan === 'enterprise' ? 99 : userPlan === 'pro' ? 29 : 0, status: 'Paid' },
@@ -22,7 +28,7 @@ export default function Billing({ goToDashboard, goToPricing, userPlan, setUserP
 
   const handleCancelSubscription = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/payments/cancel', {
+      const res = await fetch(`${API}/api/payments/cancel`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -64,6 +70,28 @@ Thank you for supporting OpsMind AI!
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+  };
+
+  const handleCardNumberChange = (e) => {
+    let val = e.target.value.replace(/\D/g, ''); // remove non-digits
+    if (val.length > 16) val = val.slice(0, 16);
+    let formatted = val.match(/.{1,4}/g)?.join(' ') || val;
+    setNewCardNumber(formatted);
+  };
+
+  const handleExpiryChange = (e) => {
+    let val = e.target.value.replace(/\D/g, '');
+    if (val.length > 4) val = val.slice(0, 4);
+    if (val.length >= 3) {
+      val = val.slice(0, 2) + '/' + val.slice(2);
+    }
+    setNewExpiry(val);
+  };
+
+  const handleCvvChange = (e) => {
+    let val = e.target.value.replace(/\D/g, '');
+    if (val.length > 4) val = val.slice(0, 4);
+    setNewCvv(val);
   };
 
   return (
@@ -230,16 +258,82 @@ Thank you for supporting OpsMind AI!
             <h3 className="modal-title">Update Payment Details</h3>
             <p className="modal-desc">Enter your new card details below. Transactions are secured and encrypted.</p>
             
-            <div className="form-group" style={{ marginBottom: '12px' }}>
-              <label className="form-label">Card Number</label>
-              <input className="form-input" type="text" placeholder="xxxx xxxx xxxx 4242" defaultValue="**** **** **** 4242" disabled />
+            <div className="form-group" style={{ marginBottom: '12px', textAlign: 'left' }}>
+              <label className="form-label" style={{ display: 'block', marginBottom: '6px', fontSize: '13px', color: '#94a3b8' }}>Card Number</label>
+              <input 
+                className="form-input" 
+                type="text" 
+                placeholder="0000 0000 0000 0000" 
+                value={newCardNumber}
+                onChange={handleCardNumberChange}
+                maxLength={19}
+                autoComplete="cc-number"
+                name="cardnumber"
+                style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.03)', color: 'white', outline: 'none' }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', marginBottom: '12px', textAlign: 'left' }}>
+              <div className="form-group" style={{ flex: 1 }}>
+                <label className="form-label" style={{ display: 'block', marginBottom: '6px', fontSize: '13px', color: '#94a3b8' }}>Expiry Date</label>
+                <input 
+                  className="form-input" 
+                  type="text" 
+                  placeholder="MM/YY" 
+                  value={newExpiry}
+                  onChange={handleExpiryChange}
+                  maxLength={5}
+                  autoComplete="cc-exp"
+                  name="cc-exp"
+                  style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.03)', color: 'white', outline: 'none' }}
+                />
+              </div>
+              <div className="form-group" style={{ flex: 1 }}>
+                <label className="form-label" style={{ display: 'block', marginBottom: '6px', fontSize: '13px', color: '#94a3b8' }}>CVV</label>
+                <input 
+                  className="form-input" 
+                  type="text" 
+                  placeholder="123" 
+                  value={newCvv}
+                  onChange={handleCvvChange}
+                  maxLength={4}
+                  autoComplete="cc-csc"
+                  name="cvc"
+                  style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.03)', color: 'white', outline: 'none' }}
+                />
+              </div>
             </div>
 
             <div className="modal-actions" style={{ marginTop: '24px' }}>
-              <button className="modal-cancel" onClick={() => setShowUpdateCardModal(false)}>
+              <button className="modal-cancel" onClick={() => {
+                setShowUpdateCardModal(false);
+                setNewCardNumber('');
+                setNewExpiry('');
+                setNewCvv('');
+              }}>
                 Cancel
               </button>
-              <button className="modal-confirm" style={{ background: '#3b82f6' }} onClick={() => setShowUpdateCardModal(false)}>
+              <button className="modal-confirm" style={{ background: '#3b82f6' }} onClick={() => {
+                if (newCardNumber.length >= 4) {
+                  const cleanNumber = newCardNumber.replace(/\s/g, '');
+                  const last4 = cleanNumber.slice(-4);
+                  let brand = 'Visa';
+                  if (cleanNumber.startsWith('5')) brand = 'Mastercard';
+                  else if (cleanNumber.startsWith('3')) brand = 'Amex';
+                  else if (cleanNumber.startsWith('6')) brand = 'Discover';
+                  
+                  setBillingInfo({
+                    ...billingInfo,
+                    cardBrand: brand,
+                    last4: last4,
+                    expiry: newExpiry || billingInfo.expiry
+                  });
+                }
+                setShowUpdateCardModal(false);
+                setNewCardNumber('');
+                setNewExpiry('');
+                setNewCvv('');
+              }}>
                 Save Changes
               </button>
             </div>

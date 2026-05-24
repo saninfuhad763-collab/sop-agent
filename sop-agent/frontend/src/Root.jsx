@@ -7,7 +7,7 @@ import Pricing from "./Pricing";
 import Payment from "./Payment";
 import Billing from "./Billing";
 
-const API = "http://localhost:5000";
+const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
 function getInitialPage(token) {
   const saved = sessionStorage.getItem("currentPage");
@@ -41,6 +41,7 @@ export default function Root() {
     localStorage.removeItem("token");
     localStorage.removeItem("userPlan");
     localStorage.removeItem("userEmail");
+    sessionStorage.removeItem("chat_messages");
     setToken(null);
     setUserPlan("free");
     setPage("home");
