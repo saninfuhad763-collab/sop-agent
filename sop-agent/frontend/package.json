@@ -15,7 +15,7 @@
     "sop-agent": "file:.."
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.7.0",
-    "vite": "^5.4.19"
+    "@vitejs/plugin-react": "^6.0.2",
+    "vite": "^8.0.10"
   }
 }

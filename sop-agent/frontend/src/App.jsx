@@ -1,10 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
+import { useAuth } from './AuthContext';
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
+export default function App(props) {
+  const auth = useAuth();
+  
+  const token = props.token || auth.token;
+  const userPlan = props.userPlan !== undefined ? props.userPlan : auth.userPlan;
+  const handleLogout = props.handleLogout || auth.handleLogout;
+  const goToHome = props.goToHome || (() => auth.setPage('home'));
+  const goToPricing = props.goToPricing || (() => auth.setPage('pricing'));
+  const goToBilling = props.goToBilling || (() => auth.setPage('billing'));
+  const API = auth.API;
 
-export default function App({ goToHome, goToPricing, goToBilling, userPlan, handleLogout }) {
-  const token = localStorage.getItem('token');
   const isPro = userPlan === 'pro' || userPlan === 'enterprise';
   const isEnterprise = userPlan === 'enterprise';
 

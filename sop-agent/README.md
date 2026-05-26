@@ -102,6 +102,10 @@ To run the unified backend server and frontend development server concurrently, 
 npm run dev
 ```
 
+> [!WARNING]
+> **DO NOT** run `npm run dev` inside the `frontend/` subdirectory separately!
+> The root startup script uses `concurrently` to launch the backend server on port 5000 and the frontend compiler on port 5173 at the same time. Starting a second instance inside the `frontend/` folder manually will result in a port conflict: `Error: Port 5173 is already in use`. Always start the application exclusively from the root workspace folder.
+
 *   **Frontend Client:** `http://localhost:5173`
 *   **Express API Backend:** `http://localhost:5000`
 

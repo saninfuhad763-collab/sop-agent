@@ -1,3 +1,7 @@
 uploads/
 node_modules/
 .env
+.cache/
+server_debug.log
+server_debug.err
+frontend/dist/
