@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 
+const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
+
 export default function Home({ goToLogin, goToRegister, goToDashboard, hasToken }) {
   const [formData, setFormData] = useState({ name: '', email: '', message: '' });
   const userPlan = localStorage.getItem('userPlan');
@@ -13,7 +15,7 @@ export default function Home({ goToLogin, goToRegister, goToDashboard, hasToken 
     setSubmitting(true);
     
     try {
-      const res = await fetch('/api/contact', {
+      const res = await fetch(`${API}/api/contact`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)

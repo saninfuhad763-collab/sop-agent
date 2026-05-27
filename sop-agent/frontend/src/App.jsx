@@ -2,6 +2,110 @@ import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useAuth } from './AuthContext';
 
+const renderMessageText = (text) => {
+  if (!text) return null;
+  
+  const lines = text.split('\n');
+  let inNote = false;
+  
+  return lines.map((line, lineIdx) => {
+    let element = line;
+    
+    // Check if we are inside a > [!NOTE] block or starting one
+    if (line.includes('[!NOTE]') || line.includes('[!IMPORTANT]') || line.includes('[!WARNING]')) {
+      inNote = true;
+      return (
+        <div key={lineIdx} className="markdown-alert-note" style={{
+          background: 'rgba(59, 130, 246, 0.1)',
+          borderLeft: '4px solid #3b82f6',
+          padding: '10px 14px',
+          borderRadius: '8px',
+          margin: '10px 0',
+          fontSize: '14px',
+          color: '#93c5fd',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+        }}>
+          <strong style={{ display: 'block', marginBottom: '4px', color: '#60a5fa' }}>ℹ️ Local Synthesis Engine Notice</strong>
+          Cloud LLM is currently unreachable (e.g. rate limit, quota, or offline). Displaying an intelligent local synthesis of your workspace documents.
+        </div>
+      );
+    }
+    
+    // If we've started the note, skip rendering other lines that are part of the > note block
+    if (inNote) {
+      if (line.startsWith('>') || line.includes('Displaying an intelligent local synthesis')) {
+        return null;
+      }
+      inNote = false; // exited note block
+    }
+    
+    let cleanLine = line;
+    let isBlockquote = false;
+    if (line.startsWith('> ')) {
+      cleanLine = line.substring(2);
+      isBlockquote = true;
+    }
+    
+    // Parse Headers
+    if (cleanLine.startsWith('### ')) {
+      const headerText = cleanLine.substring(4);
+      element = <h4 style={{ margin: '14px 0 6px 0', color: '#60a5fa', fontSize: '17px', fontWeight: '700', letterSpacing: '0.3px' }}>{headerText}</h4>;
+    } else if (cleanLine.startsWith('## ')) {
+      const headerText = cleanLine.substring(3);
+      element = <h3 style={{ margin: '16px 0 8px 0', color: '#3b82f6', fontSize: '19px', fontWeight: '800' }}>{headerText}</h3>;
+    } else if (cleanLine.startsWith('# ')) {
+      const headerText = cleanLine.substring(2);
+      element = <h2 style={{ margin: '18px 0 10px 0', color: '#2563eb', fontSize: '21px', fontWeight: '800' }}>{headerText}</h2>;
+    } else {
+      // Parse bold **text** and inline `code`
+      const parts = [];
+      const regex = /(\*\*.*?\*\*|`.*?`)/g;
+      const subParts = cleanLine.split(regex);
+      
+      subParts.forEach((part, partIdx) => {
+        if (part.startsWith('**') && part.endsWith('**')) {
+          parts.push(<strong key={partIdx} style={{ color: '#ffffff', fontWeight: '700' }}>{part.slice(2, -2)}</strong>);
+        } else if (part.startsWith('`') && part.endsWith('`')) {
+          parts.push(<code key={partIdx} style={{
+            background: 'rgba(255, 255, 255, 0.12)',
+            padding: '2px 6px',
+            borderRadius: '4px',
+            fontFamily: 'Consolas, Monaco, monospace',
+            fontSize: '13.5px',
+            color: '#f43f5e'
+          }}>{part.slice(1, -1)}</code>);
+        } else {
+          parts.push(part);
+        }
+      });
+      
+      element = <span>{parts}</span>;
+    }
+    
+    if (isBlockquote) {
+      return (
+        <div key={lineIdx} style={{
+          borderLeft: '3px solid rgba(59, 130, 246, 0.4)',
+          paddingLeft: '12px',
+          color: '#9db2ea',
+          margin: '8px 0',
+          fontStyle: 'italic',
+          background: 'rgba(59, 130, 246, 0.03)',
+          borderRadius: '2px'
+        }}>
+          {element}
+        </div>
+      );
+    }
+    
+    return (
+      <div key={lineIdx} style={{ margin: '6px 0', minHeight: '1.2em', lineHeight: '1.5' }}>
+        {element}
+      </div>
+    );
+  });
+};
+
 export default function App(props) {
   const auth = useAuth();
   
@@ -19,6 +123,8 @@ export default function App(props) {
   const [activeTab, setActiveTab] = useState('workspace');
   const [docs, setDocs] = useState([]);
   const [status, setStatus] = useState('Ready');
+  const [uploadPct, setUploadPct] = useState(0);
+  const [uploading, setUploading] = useState(false);
   const [question, setQuestion] = useState('');
   const [messages, setMessages] = useState(() => {
     try {
@@ -159,6 +265,8 @@ export default function App(props) {
 
   const upload = async (file) => {
     setStatus('Uploading PDF...');
+    setUploading(true);
+    setUploadPct(0);
 
     const fd = new FormData();
     fd.append('file', file);
@@ -176,6 +284,7 @@ export default function App(props) {
 
       if (!res.ok) {
         setStatus(data.error || 'Upload failed');
+        setUploading(false);
         if (res.status === 403) {
           setLimitModalMessage(data.error || 'SOP Upload limit reached (5 documents max on Free tier). Upgrade to Pro for unlimited uploads!');
           setShowLimitModal(true);
@@ -183,11 +292,46 @@ export default function App(props) {
         return;
       }
 
-      setStatus(`Indexed ${data.chunks} chunks from ${data.pages} page(s)`);
+      const { jobId, totalChunks } = data;
+      setStatus(`Uploading PDF... Initialized job for ${totalChunks} chunks`);
 
-      loadDocs();
+      // Create SSE connection to track progress
+      const es = new EventSource(`${API}/admin/upload/progress/${jobId}?token=${token}`);
+
+      es.onmessage = (evt) => {
+        try {
+          const job = JSON.parse(evt.data);
+          
+          if (job.status === 'processing') {
+            setUploadPct(job.pct);
+            setStatus(`Indexing... ${job.processed}/${job.total} chunks (${job.pct}%)`);
+          } else if (job.status === 'done') {
+            setUploadPct(100);
+            setStatus(`✅ Indexed ${job.total} chunks from ${job.pages || '?'} page(s)`);
+            setUploading(false);
+            loadDocs();
+            es.close();
+          } else if (job.status === 'error') {
+            setStatus(job.error || 'Indexing failed');
+            setUploading(false);
+            es.close();
+          }
+        } catch (err) {
+          console.error("SSE parse error", err);
+        }
+      };
+
+      es.onerror = (err) => {
+        console.error("SSE connection error", err);
+        setStatus('Connection lost. Indexing might still be processing in the background.');
+        setUploading(false);
+        loadDocs();
+        es.close();
+      };
+
     } catch (err) {
       setStatus('Upload failed');
+      setUploading(false);
     }
   };
 
@@ -536,6 +680,12 @@ export default function App(props) {
 
               <p className="status">{status}</p>
 
+              {uploading && (
+                <div style={{ width: '100%', background: 'rgba(255,255,255,0.08)', borderRadius: 8, height: 6, margin: '8px 0', overflow: 'hidden' }}>
+                  <div style={{ width: `${uploadPct}%`, background: 'linear-gradient(90deg, #3b82f6, #8b5cf6)', borderRadius: 8, height: '100%', transition: 'width 0.3s ease' }} />
+                </div>
+              )}
+
               <ul className="doc-list">
                 {docs.map((doc) => (
                   <li key={doc.id}>
@@ -564,7 +714,7 @@ export default function App(props) {
               <div className="chat-box">
                 {messages.map((m, i) => (
                   <div className={`msg ${m.role}`} key={i}>
-                    <div>{m.text}</div>
+                    <div style={{ whiteSpace: 'pre-wrap' }}>{renderMessageText(m.text)}</div>
 
                     {m.citations && (
                       <small>Sources: {m.citations}</small>

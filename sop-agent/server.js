@@ -36,6 +36,7 @@ let contactCollection = null;
 const memoryStore = { documents: [], chunks: [] };
 const memoryUsers = [];
 const memoryQueryLogs = [];
+const uploadJobs = new Map();
 
 // Expose collections and memory states for middleware access
 app.set("memoryUsers", memoryUsers);
@@ -129,9 +130,11 @@ async function saveDocumentWithChunks(fileName, pages, chunks, userEmail) {
   });
   const documentId = doc.insertedId;
   if (chunks.length) {
-    await chunksCollection.insertMany(
-      chunks.map((chunk) => ({ ...chunk, documentId, userEmail }))
-    );
+    const DB_BATCH = 500;
+    const docsWithMeta = chunks.map((chunk) => ({ ...chunk, documentId, userEmail }));
+    for (let i = 0; i < docsWithMeta.length; i += DB_BATCH) {
+      await chunksCollection.insertMany(docsWithMeta.slice(i, i + DB_BATCH));
+    }
   }
   return documentId.toString();
 }
@@ -428,6 +431,7 @@ app.post(
         }
 
         if (currentCount >= 5) {
+          fs.unlinkSync(req.file.path);
           return res.status(403).json({
             error:
               "SOP Upload limit reached (5 documents max on Free tier). Upgrade to Pro for unlimited uploads!",
@@ -447,30 +451,232 @@ app.post(
         return res.status(422).json({ error: "Could not parse readable text from the uploaded PDF." });
       }
 
-      const rows = [];
-      for (let i = 0; i < rawChunks.length; i++) {
-        const chunk = rawChunks[i];
-        const embedding = await getNeuralEmbedding(chunk.content);
-        rows.push({
-          fileName: req.file.originalname,
-          content: chunk.content,
-          parentContent: chunk.parentContent,
-          embedding: embedding,
-          page: Math.max(1, Math.ceil(((i + 1) / rawChunks.length) * pages)),
-          chunkIndex: i + 1,
-        });
-      }
+      const jobId = `job-${Date.now()}-${crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substr(2, 9)}`;
+      const fileName = req.file.originalname;
 
-      const documentId = await saveDocumentWithChunks(
-        req.file.originalname,
+      // Save initial job state in-memory
+      uploadJobs.set(jobId, {
+        status: "processing",
+        processed: 0,
+        total: rawChunks.length,
+        documentId: null,
+        error: null,
         pages,
-        rows,
-        userEmail
-      );
-      res.json({ message: "Document indexed", documentId, chunks: rows.length, pages });
+        fileName
+      });
+
+      // Respond immediately with HTTP 202 Accepted
+      res.status(202).json({
+        jobId,
+        fileName,
+        pages,
+        totalChunks: rawChunks.length
+      });
+
+      // Run embedding and saving asynchronously in the background
+      (async () => {
+        try {
+          const { Worker } = require("worker_threads");
+          const uniqueTexts = Array.from(new Set(rawChunks.map(c => c.content)));
+          const totalUnique = uniqueTexts.length;
+          let completedUnique = 0;
+          const embeddingMap = new Map();
+
+          const numWorkers = Math.min(6, require("os").cpus().length || 1);
+          const batchSize = Math.ceil(totalUnique / numWorkers);
+
+          console.log(`[Background Job ${jobId}] Starting parallel embedding for ${totalUnique} unique chunks across ${numWorkers} workers (from ${rawChunks.length} raw chunks)`);
+
+          const promises = [];
+          for (let w = 0; w < numWorkers; w++) {
+            const batchTexts = uniqueTexts.slice(w * batchSize, (w + 1) * batchSize);
+            if (batchTexts.length === 0) continue;
+
+            promises.push(new Promise((resolve, reject) => {
+              const worker = new Worker(path.join(__dirname, "embeddingWorker.js"), {
+                workerData: { texts: batchTexts }
+              });
+
+              worker.on("message", (msg) => {
+                if (msg && msg.type === "progress") {
+                  completedUnique += msg.count;
+                  // Update in-memory job progress mapped back to total raw chunks (estimation)
+                  const currentJob = uploadJobs.get(jobId);
+                  if (currentJob) {
+                    const rawProcessed = Math.min(rawChunks.length, Math.round((completedUnique / totalUnique) * rawChunks.length));
+                    currentJob.processed = rawProcessed;
+                    uploadJobs.set(jobId, currentJob);
+                  }
+                } else if (msg && msg.type === "done") {
+                  resolve(msg.results);
+                } else if (msg && msg.error) {
+                  reject(new Error(msg.error));
+                }
+              });
+
+              worker.on("error", reject);
+              worker.on("exit", (code) => {
+                if (code !== 0) reject(new Error(`Worker exited with code ${code}`));
+              });
+            }));
+          }
+
+          const workerResults = await Promise.all(promises);
+          for (const result of workerResults) {
+            if (Array.isArray(result)) {
+              for (const item of result) {
+                embeddingMap.set(item.text, item.embedding);
+              }
+            }
+          }
+
+          // Build final rows mapping unique embeddings back to the duplicate raw chunks
+          const rows = rawChunks.map((chunk, i) => {
+            const embedding = embeddingMap.get(chunk.content) || new Array(384).fill(0);
+            return {
+              fileName,
+              content: chunk.content,
+              parentContent: chunk.parentContent,
+              embedding: embedding,
+              page: Math.max(1, Math.ceil(((i + 1) / rawChunks.length) * pages)),
+              chunkIndex: i + 1,
+            };
+          });
+
+          // Save document with chunked inserts to MongoDB
+          const documentId = await saveDocumentWithChunks(
+            fileName,
+            pages,
+            rows,
+            userEmail
+          );
+
+          // Mark job as successful
+          const currentJob = uploadJobs.get(jobId);
+          if (currentJob) {
+            currentJob.processed = rawChunks.length;
+            currentJob.status = "done";
+            currentJob.documentId = documentId;
+            uploadJobs.set(jobId, currentJob);
+          }
+        } catch (bgError) {
+          console.error(`Background upload job ${jobId} failed, trying sequential main-thread fallback:`, bgError);
+          
+          try {
+            const embeddingMap = new Map();
+            const uniqueTexts = Array.from(new Set(rawChunks.map(c => c.content)));
+            
+            for (let i = 0; i < uniqueTexts.length; i++) {
+              const text = uniqueTexts[i];
+              const embedding = await getNeuralEmbedding(text);
+              embeddingMap.set(text, embedding);
+
+              const currentJob = uploadJobs.get(jobId);
+              if (currentJob) {
+                const rawProcessed = Math.min(rawChunks.length, Math.round(((i + 1) / uniqueTexts.length) * rawChunks.length));
+                currentJob.processed = rawProcessed;
+                uploadJobs.set(jobId, currentJob);
+              }
+            }
+
+            const rows = rawChunks.map((chunk, i) => {
+              const embedding = embeddingMap.get(chunk.content) || new Array(384).fill(0);
+              return {
+                fileName,
+                content: chunk.content,
+                parentContent: chunk.parentContent,
+                embedding: embedding,
+                page: Math.max(1, Math.ceil(((i + 1) / rawChunks.length) * pages)),
+                chunkIndex: i + 1,
+              };
+            });
+
+            const documentId = await saveDocumentWithChunks(
+              fileName,
+              pages,
+              rows,
+              userEmail
+            );
+
+            const currentJob = uploadJobs.get(jobId);
+            if (currentJob) {
+              currentJob.processed = rawChunks.length;
+              currentJob.status = "done";
+              currentJob.documentId = documentId;
+              uploadJobs.set(jobId, currentJob);
+            }
+          } catch (fallbackError) {
+            console.error("Main-thread fallback failed too:", fallbackError);
+            const currentJob = uploadJobs.get(jobId);
+            if (currentJob) {
+              currentJob.status = "error";
+              currentJob.error = fallbackError.message || "Background indexing failed";
+              uploadJobs.set(jobId, currentJob);
+            }
+          }
+        }
+      })();
+
     } catch (error) {
+      if (req.file && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
       res.status(500).json({ error: "Upload failed", details: error.message });
     }
+  }
+);
+
+app.get(
+  "/admin/upload/progress/:jobId",
+  authenticateJWT,
+  authorizeRoles(["owner", "editor"]),
+  (req, res) => {
+    const { jobId } = req.params;
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    if (res.flushHeaders) res.flushHeaders();
+
+    const sendUpdate = () => {
+      const job = uploadJobs.get(jobId);
+      if (!job) {
+        res.write(`data: ${JSON.stringify({ status: "error", error: "Job not found" })}\n\n`);
+        res.end();
+        return true;
+      }
+
+      const pct = job.total > 0 ? Math.round((job.processed / job.total) * 100) : 0;
+      res.write(`data: ${JSON.stringify({
+        processed: job.processed,
+        total: job.total,
+        pct,
+        status: job.status,
+        documentId: job.documentId,
+        pages: job.pages,
+        error: job.error
+      })}\n\n`);
+
+      if (job.status === "done" || job.status === "error") {
+        res.end();
+        return true;
+      }
+      return false;
+    };
+
+    const ended = sendUpdate();
+    if (ended) return;
+
+    const intervalId = setInterval(() => {
+      const isDone = sendUpdate();
+      if (isDone) {
+        clearInterval(intervalId);
+      }
+    }, 300);
+
+    req.on("close", () => {
+      clearInterval(intervalId);
+    });
   }
 );
 
@@ -497,7 +703,168 @@ app.post("/api/payments/cancel", authenticateJWT, async (req, res) => {
   }
 });
 
+/**
+ * Advanced Local NLP Synthesis Engine for high-fidelity offline RAG answers.
+ * Analyzes query terms, ranks context sentences, and builds a synthesized markdown response with inline citations.
+ */
+function synthesizeLocalAnswer(question, topChunks) {
+  const stopwords = new Set([
+    "what", "how", "why", "who", "when", "where", "which", "whose", "whom",
+    "this", "that", "these", "those", "their", "there", "here", "them",
+    "they", "with", "from", "your", "have", "been", "were", "does", "doing",
+    "after", "before", "about", "above", "below", "only", "other", "some",
+    "would", "could", "should", "you", "your", "yours", "myself", "himself"
+  ]);
+
+  // Extract clean keywords from the query
+  const rawTerms = question.toLowerCase().split(/\W+/).filter(t => t.length > 2 && !stopwords.has(t));
+  
+  // Detect specific phrases like "project 1", "step 2", etc. to execute precise negative matching
+  const queryPhrases = [];
+  const phraseRegex = /(project|step|rule|phase|sla|chunk|page)\s*(\d+)/gi;
+  let match;
+  while ((match = phraseRegex.exec(question)) !== null) {
+    queryPhrases.push({
+      keyword: match[1].toLowerCase(),
+      number: match[2]
+    });
+  }
+
+  const sentencesWithSource = [];
+  const seenSentences = new Set();
+
+  topChunks.forEach((chunk, chunkIdx) => {
+    const text = chunk.parentContent || chunk.content || "";
+    // Split by sentence boundaries, handling abbreviations cleanly
+    const sentences = text.split(/(?<=[.!?])\s+/);
+    
+    sentences.forEach(sentence => {
+      const clean = sentence.trim();
+      if (clean.length < 15) return; // ignore short noise / empty headers
+      
+      const lower = clean.toLowerCase();
+      
+      // Strict Mismatch Filter: Discard lines discussing unrelated projects/steps
+      // e.g. if the user specifically query for "project 1", discard lines talking about "project 2" or "project 3"
+      let isMismatch = false;
+      queryPhrases.forEach(phrase => {
+        const mismatchRegex = new RegExp(`\\b${phrase.keyword}\\s*(?!${phrase.number}\\b)\\d+\\b`, "i");
+        if (mismatchRegex.test(clean)) {
+          isMismatch = true;
+        }
+      });
+
+      if (isMismatch) return; // Drop mismatched sentence
+
+      // Deduplicate sentences
+      const normalized = lower.replace(/\W/g, "");
+      if (seenSentences.has(normalized)) return;
+      seenSentences.add(normalized);
+
+      let score = 0;
+      rawTerms.forEach(term => {
+        if (lower.includes(term)) {
+          score += 1.0;
+          if (lower.includes(" " + term + " ")) {
+            score += 0.5; // full word match boost
+          }
+        }
+      });
+
+      // Highlight operational indicators: numbers, metrics, dates, percentages
+      if (/\b\d+(\.\d+)?%?\b/.test(clean)) score += 0.8;
+      if (/\b(must|should|required|always|never|approved|policy|sla|incident)\b/i.test(clean)) score += 0.5;
+
+      // Heavy priority boost for direct matches on queried project/step number
+      queryPhrases.forEach(phrase => {
+        const directRegex = new RegExp(`\\b${phrase.keyword}\\s*${phrase.number}\\b`, "i");
+        if (directRegex.test(clean)) {
+          score += 5.0; // massive score boost for exact target entity match
+        }
+      });
+
+      sentencesWithSource.push({
+        text: clean,
+        fileName: chunk.fileName,
+        page: chunk.page,
+        chunkIndex: chunk.chunkIndex,
+        sourceIndex: chunkIdx + 1,
+        score
+      });
+    });
+  });
+
+  // Filter sentences that have at least some keyword overlap, sort by relevance score descending
+  const ranked = sentencesWithSource
+    .filter(s => s.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  const selected = [];
+  if (ranked.length > 0) {
+    // Take up to 5 most relevant sentences to synthesize a concise, readable response
+    const topSentences = ranked.slice(0, 5);
+    // Re-sort them by their sourceIndex to maintain logical SOP reading order
+    topSentences.sort((a, b) => a.sourceIndex - b.sourceIndex);
+    topSentences.forEach(s => selected.push(s));
+  } else {
+    // If no sentences match the keywords, fall back to the first sentence of the top 3 chunks
+    topChunks.slice(0, 3).forEach((chunk, idx) => {
+      const text = chunk.parentContent || chunk.content || "";
+      const firstSentence = text.split(/(?<=[.!?])\s+/)[0]?.trim();
+      if (firstSentence && firstSentence.length > 15) {
+        selected.push({
+          text: firstSentence,
+          fileName: chunk.fileName,
+          page: chunk.page,
+          chunkIndex: chunk.chunkIndex,
+          sourceIndex: idx + 1
+        });
+      }
+    });
+  }
+
+  let output = `### 🤖 OpsMind AI: Local Synthesis Engine\n\n`;
+  output += `> [!NOTE]\n`;
+  output += `> *Cloud LLM is currently unreachable (e.g. rate limit, quota, or offline). Displaying an intelligent local synthesis of your workspace documents.*\n\n`;
+
+  if (selected.length > 0) {
+    output += `Based on a local semantic analysis of **${topChunks[0].fileName}**, here is the synthesized operational guide:\n\n`;
+    
+    // Group selected sentences by page for a beautiful structured display
+    const groupedByPage = {};
+    selected.forEach(s => {
+      const pageKey = s.page;
+      if (!groupedByPage[pageKey]) groupedByPage[pageKey] = [];
+      groupedByPage[pageKey].push(s);
+    });
+
+    Object.keys(groupedByPage).forEach(page => {
+      output += `#### 📄 Content from Page ${page}\n`;
+      groupedByPage[page].forEach(s => {
+        output += `* ${s.text} **[${s.sourceIndex}]**\n`;
+      });
+      output += `\n`;
+    });
+  } else {
+    output += `We found highly relevant chunks in your database but couldn't synthesize specific sentence-level answers. Below is the direct text extraction:\n\n`;
+    topChunks.slice(0, 2).forEach((c, idx) => {
+      output += `**Context Chunk [${idx + 1}]** *(Source: ${c.fileName}, Page ${c.page}):*\n> ${c.content}\n\n`;
+    });
+  }
+
+  output += `---\n`;
+  output += `💡 *Tip: To restore fully-generative AI responses, please ensure your \`GROQ_API_KEY\` is correctly configured in your \`.env\` file.*`;
+  return output;
+}
+
 app.get("/chat/stream", authenticateJWT, chatLimiter, async (req, res) => {
+  // Dynamically reload environmental variables to pick up runtime .env key rotations instantly
+  try {
+    require("dotenv").config({ override: true });
+  } catch (envErr) {
+    console.warn("Failed to reload dotenv at runtime:", envErr.message);
+  }
+
   const userEmail = req.user.email.trim().toLowerCase();
   const workspaceEmail = req.user.workspaceEmail.trim().toLowerCase();
   const question = String(req.query.question || "").trim();
@@ -561,7 +928,18 @@ app.get("/chat/stream", authenticateJWT, chatLimiter, async (req, res) => {
   }
 
   // Supply semantic parentContent context for complete RAG retrieval scope
-  const context = topChunks
+  // Deduplicate context blocks based on parentContent or content to optimize context window space
+  const seenContents = new Set();
+  const dedupedChunks = [];
+  for (const chunk of topChunks) {
+    const contentKey = (chunk.parentContent || chunk.content || "").trim();
+    if (!seenContents.has(contentKey)) {
+      seenContents.add(contentKey);
+      dedupedChunks.push(chunk);
+    }
+  }
+
+  const context = dedupedChunks
     .map(
       (c, i) =>
         `[${i + 1}] [Source: ${c.fileName}, Page ${c.page}] ${
@@ -571,16 +949,35 @@ app.get("/chat/stream", authenticateJWT, chatLimiter, async (req, res) => {
     .join("\n\n");
 
   try {
-    const completion = await groq.chat.completions.create({
-      model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
-      temperature: 0.15,
-      max_tokens: 1024,
-      stream: true,
-      messages: [
-        {
-          role: "system",
-          content: `You are OpsMind AI, an ultra-precise operations copilot. Answer the user's question using ONLY the provided SOP context chunks below.
+    const currentApiKey = process.env.GROQ_API_KEY || "";
+    if (!currentApiKey || currentApiKey.trim() === "") {
+      throw new Error("GROQ_API_KEY is not defined or is empty in .env configuration");
+    }
 
+    const clientGroq = new Groq({ apiKey: currentApiKey });
+    const candidateModels = [
+      process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+      "llama-3.3-70b-versatile",
+      "llama-3.3-70b-specdec",
+      "gemma2-9b-it"
+    ];
+
+    let completion = null;
+    let lastLlmError = null;
+
+    for (const modelName of candidateModels) {
+      try {
+        console.log(`[RAG Stream] Attempting cloud generation using model: ${modelName}`);
+        completion = await clientGroq.chat.completions.create({
+          model: modelName,
+          temperature: 0.15,
+          max_tokens: 1024,
+          stream: true,
+          messages: [
+            {
+              role: "system",
+              content: `You are OpsMind AI, an ultra-precise operations copilot. Answer the user's question using ONLY the provided SOP context chunks below.
+    
 Rules:
 1. Read ALL provided context chunks carefully before answering.
 2. Synthesize information from multiple chunks to give a COMPLETE, structured answer.
@@ -590,13 +987,23 @@ Rules:
 6. Cite which chunk(s) your answer comes from using [1], [2], etc.
 7. ONLY say "I don't know based on the SOPs" if NONE of the provided chunks contain ANY relevant information about the question. If even partial info exists, use it and answer as completely as possible.
 8. Never fabricate information not present in the context.`,
-        },
-        {
-          role: "user",
-          content: `CONTEXT CHUNKS:\n${context}\n\nQUESTION: ${question}\n\nProvide a complete, detailed answer based on the context above.`,
-        },
-      ],
-    });
+            },
+            {
+              role: "user",
+              content: `CONTEXT CHUNKS:\n${context}\n\nQUESTION: ${question}\n\nProvide a complete, detailed answer based on the context above.`,
+            },
+          ],
+        });
+        break; // Successfully created completion stream!
+      } catch (err) {
+        console.warn(`[RAG Stream Warning] Groq model ${modelName} initialization failed:`, err.message);
+        lastLlmError = err;
+      }
+    }
+
+    if (!completion) {
+      throw lastLlmError || new Error("Failed to initialize all candidate Groq models.");
+    }
 
     let responseText = "";
     for await (const part of completion) {
@@ -622,7 +1029,7 @@ Rules:
       memoryQueryLogs.push(logRecord);
     }
 
-    const citations = topChunks
+    const citations = dedupedChunks
       .map(
         (c, i) => `${i + 1}) ${c.fileName}, Page ${c.page}, Chunk ${c.chunkIndex}`
       )
@@ -630,8 +1037,50 @@ Rules:
     res.write(`data: ${JSON.stringify({ done: true, citations })}\n\n`);
     res.end();
   } catch (error) {
-    res.write(`data: ${JSON.stringify({ error: "Streaming failed." })}\n\n`);
-    res.end();
+    console.error("Error in /chat/stream cloud LLM generation path:", error);
+    try {
+      if (!topChunks || !topChunks.length) {
+        res.write(`data: ${JSON.stringify({ error: "Streaming failed." })}\n\n`);
+        res.end();
+        return;
+      }
+      
+      const fullFallbackText = synthesizeLocalAnswer(question, topChunks);
+
+      // Stream the local synthesized text token-by-token (simulated stream of 20 tokens per second for high-fidelity visual animation)
+      const tokens = fullFallbackText.split(" ");
+      
+      for (let i = 0; i < tokens.length; i++) {
+        const token = tokens[i] + (i === tokens.length - 1 ? "" : " ");
+        res.write(`data: ${JSON.stringify({ token })}\n\n`);
+        // Small delay to simulate real-time streaming animation
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+
+      // Write query log
+      const logRecord = {
+        userEmail: workspaceEmail,
+        question,
+        isSatisfied: true,
+        queriedBy: userEmail,
+        timestamp: new Date(),
+      };
+      if (queryLogsCollection) {
+        await queryLogsCollection.insertOne(logRecord);
+      } else {
+        memoryQueryLogs.push(logRecord);
+      }
+
+      const citations = topChunks
+        .map((c, i) => `${i + 1}) ${c.fileName}, Page ${c.page}, Chunk ${c.chunkIndex}`)
+        .join("; ");
+      res.write(`data: ${JSON.stringify({ done: true, citations })}\n\n`);
+      res.end();
+    } catch (fallbackError) {
+      console.error("Critical local fallback engine failure:", fallbackError);
+      res.write(`data: ${JSON.stringify({ error: "Streaming failed." })}\n\n`);
+      res.end();
+    }
   }
 });
 
