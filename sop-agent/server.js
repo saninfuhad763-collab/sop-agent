@@ -291,14 +291,14 @@ app.post("/auth/login", authLimiter, async (req, res) => {
 
     if (!user) {
       return res.status(400).json({
-        error: "Invalid credentials",
+        error: "No account found with this email",
       });
     }
 
     const match = await bcrypt.compare(password, user.password);
     if (!match) {
       return res.status(400).json({
-        error: "Invalid credentials",
+        error: "The password you entered is incorrect",
       });
     }
 
